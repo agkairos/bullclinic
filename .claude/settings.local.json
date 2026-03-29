@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(php artisan:*)",
+      "Bash(php artisan tinker --execute=\":*)",
+      "Bash(find c:/laragon/www/bullclinic2/resources/js -type f \\\\\\(-name *.js -o -name *.ts -o -name *.jsx -o -name *.tsx \\\\\\))",
+      "Bash(find c:/laragon/www/bullclinic2/config -type f -name *.php)",
+      "Bash(composer dump-autoload:*)"
+    ]
+  }
+}
