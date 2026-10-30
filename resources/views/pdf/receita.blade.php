@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: DejaVu Sans, sans-serif; font-size: 11px; color: #1f2937; line-height: 1.6; }
+    body { font-family: DejaVu Sans, sans-serif; font-size: 11px; color: #1f2937; line-height: 1.6; padding: 20px; }
     .header { border-bottom: 2px solid #00c1b3; padding-bottom: 12px; margin-bottom: 16px; }
     .clinic-name { font-size: 18px; font-weight: bold; color: #00c1b3; }
     .doc-title { font-size: 13px; font-weight: bold; color: #374151; }
@@ -66,7 +66,7 @@
     <div class="med-detail">Via: {{ $item->via_administracao }}</div>
     @endif
     @if($item->instrucoes_especificas)
-    <div class="med-detail" style="margin-top:4px;font-style:italic">{{ $item->instrucoes_especificas }}</div>
+    <div class="med-detail" style="margin-top:4px;font-style:italic">{!! $item->instrucoes_especificas !!}</div>
     @endif
 </div>
 @empty
@@ -75,7 +75,7 @@
 
 @if($receita->instrucoes_gerais)
 <div class="instrucoes">
-    <strong>Instruções gerais:</strong> {{ $receita->instrucoes_gerais }}
+    <strong>Instruções gerais:</strong> {!! $receita->instrucoes_gerais !!}
 </div>
 @endif
 

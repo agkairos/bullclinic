@@ -54,9 +54,12 @@ class ClienteController extends Controller
         return Inertia::render('Clientes/Index', ['clientes' => $clientes, 'filters' => $request->only('search', 'status')]);
     }
 
-    public function show(Cliente $cliente): Response
+    public function show(Request $request, Cliente $cliente): Response|JsonResponse
     {
         $cliente->load(['pacientes' => fn($q) => $q->withCount('consultas')]);
+        if ($request->wantsJson()) {
+            return response()->json($cliente);
+        }
         return Inertia::render('Clientes/Show', ['cliente' => $cliente]);
     }
 

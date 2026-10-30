@@ -9,10 +9,12 @@ use App\Models\Plano;
 use App\Models\Role;
 use App\Models\User;
 use App\Models\UserClinica;
+use App\Notifications\NovoClienteRegistrado;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -33,8 +35,8 @@ class RegisterController extends Controller
             'clinica_nome' => ['required', 'string', 'max:255'],
         ]);
 
-        DB::transaction(function () use ($request) {
-            $planoGratis = Plano::where('slug', 'gratis')->firstOrFail();
+        $user = DB::transaction(function () use ($request) {
+            $planoGratis = Plano::where('slug','gratis')->firstOrFail();
 
             // Cria conta master
             $conta = Conta::create([
@@ -62,9 +64,10 @@ class RegisterController extends Controller
                 'password'        => $request->password,
                 'conta_ativa_id'  => $conta->id,
                 'clinica_ativa_id' => $clinica->id,
+                'ativo'           => true,
             ]);
 
-            // Associa como super_admin da conta
+            // Associa como admin da clínica
             $roleAdmin = Role::where('nome', 'admin')->whereNull('clinica_id')->first();
             UserClinica::create([
                 'user_id'    => $user->id,
@@ -73,9 +76,24 @@ class RegisterController extends Controller
                 'ativo'      => true,
             ]);
 
-            Auth::login($user);
+            return $user;
         });
 
-        return redirect()->route('dashboard');
+        // Envia email de verificação
+        $user->sendEmailVerificationNotification();
+
+        // Notifica o admin sobre novo cadastro
+        Notification::route('mail', 'contato@agenciakairos.com.br')
+            ->notify(new NovoClienteRegistrado(
+                $user,
+                $request->clinica_nome,
+                'Gratuito'
+            ));
+
+        // Faz login para acessar a página de verificação
+        Auth::login($user);
+
+        return redirect()->route('verification.notice')
+            ->with('success', 'Cadastro realizado! Verifique seu email para ativar sua conta.');
     }
 }

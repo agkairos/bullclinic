@@ -33,6 +33,7 @@
         "@inertiajs/vue3": "^3.0.0",
         "@tailwindcss/vite": "^4.1.11",
         "@vitejs/plugin-vue": "^6.0.0",
+        "@vueup/vue-quill": "^1.2.0",
         "@vueuse/core": "^12.8.2",
         "apexcharts": "^5.10.4",
         "class-variance-authority": "^0.7.1",

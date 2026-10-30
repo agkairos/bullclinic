@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, reactive } from 'vue';
 import { router } from '@inertiajs/vue3';
 import AppLayout from '@/layouts/AppLayout.vue';
+import RichText from '@/components/RichText.vue';
 
 defineOptions({ layout: AppLayout });
 
@@ -15,20 +16,58 @@ type Lancamento = {
     forma_pagamento: string | null;
     categoria: { id: number; nome: string } | null;
     observacoes: string | null;
+    consulta?: {
+        id: number;
+        agendamento?: { tipo_servico?: { nome: string; preco: string } };
+        procedimentos: Array<{ tipo_procedimento: string; valor_cobrado: string | null }>;
+        produtos_utilizados: Array<{ produto: { nome: string }; quantidade: string; valor_unitario: string; subtotal: number }>;
+        receitas: Array<{ itens: Array<{ medicamento_nome: string; produto?: { preco_venda: string }; vendido_pela_clinica: boolean; quantidade: string }> }>;
+    } | null;
 };
 
 const props = defineProps<{
-    receitas: Lancamento[];
-    despesas: Lancamento[];
+    receitas: { data: Lancamento[]; links: any[] };
+    despesas: { data: Lancamento[]; links: any[] };
     resumo: { total_receitas: number; total_despesas: number; saldo: number; a_receber: number; a_pagar: number };
     categorias: Array<{ id: number; nome: string; tipo: string }>;
     periodo: string;
     grafico: Array<{ mes: string; receitas: number; despesas: number }>;
+    filters: {
+        periodo?: string;
+        status?: string;
+        data_inicio?: string;
+        data_fim?: string;
+    };
 }>();
 
 const abaAtiva = ref<'receitas' | 'despesas'>('receitas');
 const periodo = ref(props.periodo);
 const filtroStatus = ref('');
+
+// Filtros de data
+const filters = reactive({
+    data_inicio: props.filters.data_inicio ?? '',
+    data_fim: props.filters.data_fim ?? '',
+});
+
+function aplicarFiltros() {
+    router.get('/financeiro', {
+        periodo: periodo.value,
+        status: filtroStatus.value || undefined,
+        data_inicio: filters.data_inicio || undefined,
+        data_fim: filters.data_fim || undefined,
+    }, { preserveState: true });
+}
+
+function limparFiltrosData() {
+    filters.data_inicio = '';
+    filters.data_fim = '';
+    aplicarFiltros();
+}
+
+function pageLabel(label: string): string {
+    return label.replace(/&laquo;/g, '«').replace(/&raquo;/g, '»');
+}
 
 // ── Modal novo lançamento ────────────────────────────────────────────────────
 const showModal = ref(false);
@@ -104,7 +143,7 @@ function marcarPago(l: Lancamento) {
 
 // ── Filtros da tabela ─────────────────────────────────────────────────────────
 const listaAtiva = computed(() => {
-    const lista = abaAtiva.value === 'receitas' ? props.receitas : props.despesas;
+    const lista = abaAtiva.value === 'receitas' ? props.receitas.data : props.despesas.data;
     return filtroStatus.value ? lista.filter(l => l.status === filtroStatus.value) : lista;
 });
 
@@ -116,8 +155,10 @@ function fmt(v: number) {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 }
 
-function fmtData(d: string) {
-    return new Date(d + 'T00:00:00').toLocaleDateString('pt-BR');
+function fmtData(d: string | null) {
+    if (!d) return '—';
+    const date = new Date(d + 'T00:00:00');
+    return isNaN(date.getTime()) ? '—' : date.toLocaleDateString('pt-BR');
 }
 
 function statusClass(s: string) {
@@ -144,10 +185,34 @@ function mesAbrev(m: string) {
     <div class="px-8 py-6">
         <div class="mb-6 flex items-center justify-between">
             <h1 class="text-xl font-bold text-gray-900">Financeiro</h1>
-            <div class="flex items-center gap-2">
-                <input type="month" v-model="periodo"
-                    class="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-primary-500"
-                    @change="router.get('/financeiro', { periodo }, { preserveState: true })" />
+            <div class="flex items-center gap-3">
+                <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600">Período mensal</label>
+                    <input type="month" v-model="periodo"
+                        class="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-primary-500"
+                        @change="router.get('/financeiro', { periodo }, { preserveState: true })" />
+                </div>
+                <span class="mt-5 text-gray-400">ou</span>
+                <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600">Data início</label>
+                    <input v-model="filters.data_inicio" type="date"
+                        class="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-primary-500" />
+                </div>
+                <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600">Data fim</label>
+                    <input v-model="filters.data_fim" type="date"
+                        class="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-primary-500" />
+                </div>
+                <div class="mt-5 flex items-center gap-2">
+                    <button @click="aplicarFiltros"
+                        class="rounded-lg bg-primary-500 px-4 py-1.5 text-sm text-white hover:bg-primary-600">
+                        Filtrar
+                    </button>
+                    <button v-if="filters.data_inicio || filters.data_fim" @click="limparFiltrosData"
+                        class="rounded-lg border border-gray-200 px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
+                        Limpar
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -255,6 +320,18 @@ function mesAbrev(m: string) {
                     </tr>
                 </tbody>
             </table>
+
+            <!-- Paginação -->
+            <div v-if="(abaAtiva === 'receitas' ? receitas.links : despesas.links)?.length > 3" class="flex justify-center gap-1 border-t border-gray-50 px-5 py-3">
+                <template v-for="link in (abaAtiva === 'receitas' ? receitas.links : despesas.links)" :key="link.label">
+                    <button v-if="link.url" @click="router.get(link.url)"
+                        class="rounded px-2.5 py-1 text-xs"
+                        :class="link.active ? 'bg-primary-500 text-white' : 'text-gray-500 hover:bg-gray-100'">
+                        {{ pageLabel(link.label) }}
+                    </button>
+                    <span v-else class="px-1 text-xs text-gray-300">{{ pageLabel(link.label) }}</span>
+                </template>
+            </div>
         </div>
     </div>
 
@@ -312,7 +389,7 @@ function mesAbrev(m: string) {
                 </div>
                 <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600">Observações</label>
-                    <textarea v-model="lancForm.observacoes" rows="2" class="w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500"></textarea>
+                    <RichText v-model="lancForm.observacoes" min-height="60px" />
                 </div>
             </div>
             <div class="mt-5 flex justify-end gap-2">
@@ -335,6 +412,47 @@ function mesAbrev(m: string) {
                 </div>
 
                 <div class="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                    <!-- Detalhamento da consulta -->
+                    <div v-if="editForm.consulta" class="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                        <h3 class="mb-3 text-xs font-semibold text-gray-700">Detalhamento da consulta</h3>
+                        <div class="space-y-2 text-xs">
+                            <!-- Serviço base -->
+                            <div v-if="editForm.consulta.agendamento?.tipo_servico" class="flex items-center justify-between">
+                                <span class="text-gray-600">{{ editForm.consulta.agendamento.tipo_servico.nome }}</span>
+                                <span class="font-medium text-gray-800">{{ new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(parseFloat(editForm.consulta.agendamento.tipo_servico.preco)) }}</span>
+                            </div>
+
+                            <!-- Procedimentos -->
+                            <div v-for="p in editForm.consulta.procedimentos.filter(p => p.valor_cobrado)" :key="'proc-' + p.tipo_procedimento" class="flex items-center justify-between">
+                                <span class="text-gray-600">Procedimento: {{ p.tipo_procedimento }}</span>
+                                <span class="font-medium text-gray-800">{{ new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(parseFloat(p.valor_cobrado || '0')) }}</span>
+                            </div>
+
+                            <!-- Produtos utilizados -->
+                            <div v-for="prod in editForm.consulta.produtos_utilizados" :key="'prod-' + prod.produto.nome" class="flex items-center justify-between">
+                                <span class="text-gray-600">Item: {{ prod.produto.nome }} ({{ prod.quantidade }}x)</span>
+                                <span class="font-medium text-gray-800">{{ new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(prod.subtotal) }}</span>
+                            </div>
+
+                            <!-- Medicamentos vendidos -->
+                            <template v-for="(receita, ri) in editForm.consulta.receitas" :key="'rec-' + ri">
+                                <div v-for="(item, ii) in receita.itens.filter(i => i.vendido_pela_clinica && i.produto)" :key="'med-' + ii" class="flex items-center justify-between">
+                                    <span class="text-gray-600">Medicamento: {{ item.medicamento_nome }} ({{ item.quantidade }})</span>
+                                    <span class="font-medium text-gray-800">
+                                        {{ new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                                            parseFloat(item.quantidade || '1') * parseFloat(item.produto?.preco_venda || '0')
+                                        ) }}
+                                    </span>
+                                </div>
+                            </template>
+
+                            <div class="mt-3 flex items-center justify-between border-t border-gray-300 pt-2 font-semibold text-gray-800">
+                                <span>Total</span>
+                                <span>{{ new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(parseFloat(editForm.valor)) }}</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600">Descrição *</label>
                         <input v-model="editForm.descricao" type="text" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500" />
@@ -383,7 +501,7 @@ function mesAbrev(m: string) {
                     </div>
                     <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600">Observações</label>
-                        <textarea v-model="editForm.observacoes" rows="3" class="w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500"></textarea>
+                        <RichText v-model="editForm.observacoes" min-height="80px" />
                     </div>
                 </div>
 

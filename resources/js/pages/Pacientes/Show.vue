@@ -270,7 +270,7 @@ function excluir() {
                                 <span class="font-medium text-gray-800">{{ c.tipo ?? 'Consulta' }}</span>
                                 <span v-if="c.veterinario" class="ml-2 text-xs text-gray-400">· Dr(a). {{ c.veterinario.name }}</span>
                             </div>
-                            <span class="text-xs text-gray-400">{{ new Date(c.data).toLocaleDateString('pt-BR') }}</span>
+                            <span class="text-xs text-gray-400">{{ c.data ? new Date(c.data).toLocaleDateString('pt-BR') : '—' }}</span>
                         </div>
                     </div>
                     <p v-else class="text-xs text-gray-400">Nenhuma consulta registrada.</p>

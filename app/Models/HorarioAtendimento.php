@@ -11,7 +11,7 @@ class HorarioAtendimento extends Model
     protected $table = 'horarios_atendimento';
 
     protected $fillable = [
-        'user_id', 'clinica_id', 'dia_semana',
+        'user_id', 'clinica_id', 'dia_semana', 'ordem',
         'hora_inicio', 'hora_fim',
         'duracao_consulta_minutos', 'intervalo_entre_consultas_minutos', 'ativo',
     ];

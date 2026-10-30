@@ -11,6 +11,15 @@ class MensagemLeitura extends Model
 
     protected $fillable = ['mensagem_id', 'user_id', 'lida_em'];
 
+    protected $attributes = ['lida_em' => null];
+
+    protected static function booted(): void
+    {
+        static::creating(function (self $model) {
+            $model->lida_em ??= now();
+        });
+    }
+
     protected $casts = ['lida_em' => 'datetime'];
 
     public function mensagem(): BelongsTo

@@ -2,7 +2,7 @@
 import { router } from '@inertiajs/vue3';
 import { ref } from 'vue';
 import AppLayout from '@/layouts/AppLayout.vue';
-
+import RichText from '@/components/RichText.vue';
 defineOptions({ layout: AppLayout });
 
 const props = defineProps<{
@@ -147,6 +147,52 @@ return '-';
 
     return tel.replace(/^(\d{2})(\d{4,5})(\d{4})$/, '($1) $2-$3');
 }
+
+// ── Máscaras ─────────────────────────────────────────────────────────────────
+function maskCnpj(e: Event) {
+    let v = (e.target as HTMLInputElement).value.replace(/\D/g, '').slice(0, 14);
+    v = v.replace(/(\d{2})(\d)/, '$1.$2');
+    v = v.replace(/(\d{2})\.(\d{3})(\d)/, '$1.$2.$3');
+    v = v.replace(/(\d{2})\.(\d{3})\.(\d{3})(\d)/, '$1.$2.$3/$4');
+    v = v.replace(/(\d{4})(\d)/, '$1-$2');
+    form.value.cnpj = v;
+}
+
+function maskFone(e: Event) {
+    let v = (e.target as HTMLInputElement).value.replace(/\D/g, '').slice(0, 11);
+    v = v.length <= 10
+        ? v.replace(/^(\d{2})(\d)/, '($1) $2').replace(/(\d{4})(\d)/, '$1-$2')
+        : v.replace(/^(\d{2})(\d)/, '($1) $2').replace(/(\d{5})(\d)/, '$1-$2');
+    form.value.telefone = v;
+}
+
+function maskCep(e: Event) {
+    let v = (e.target as HTMLInputElement).value.replace(/\D/g, '').slice(0, 8);
+    form.value.cep = v.replace(/(\d{5})(\d)/, '$1-$2');
+}
+
+const buscandoCep = ref(false);
+const cepNaoEncontrado = ref(false);
+async function onCepBlur() {
+    const cep = form.value.cep.replace(/\D/g, '');
+    if (cep.length !== 8) return;
+    buscandoCep.value = true;
+    cepNaoEncontrado.value = false;
+    try {
+        const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+        const data = await res.json();
+        if (!data.erro) {
+            form.value.logradouro = data.logradouro ?? '';
+            form.value.bairro = data.bairro ?? '';
+            form.value.cidade = data.localidade ?? '';
+            form.value.estado = data.uf ?? '';
+        } else {
+            cepNaoEncontrado.value = true;
+        }
+    } finally { buscandoCep.value = false; }
+}
+
+const estados = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
 </script>
 
 <template>
@@ -271,7 +317,7 @@ return '-';
                         </div>
                         <div>
                             <label class="mb-1.5 block text-sm font-medium text-gray-700">CNPJ</label>
-                            <input v-model="form.cnpj" type="text" maxlength="18" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20" />
+                            <input :value="form.cnpj" @input="maskCnpj" type="text" maxlength="18" placeholder="00.000.000/0000-00" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20" />
                         </div>
                     </div>
                 </div>
@@ -283,7 +329,7 @@ return '-';
                         <div class="grid grid-cols-2 gap-3">
                             <div>
                                 <label class="mb-1.5 block text-sm font-medium text-gray-700">Telefone</label>
-                                <input v-model="form.telefone" type="text" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20" />
+                                <input :value="form.telefone" @input="maskFone" type="text" maxlength="15" placeholder="(00) 00000-0000" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20" />
                             </div>
                             <div>
                                 <label class="mb-1.5 block text-sm font-medium text-gray-700">Email</label>
@@ -303,7 +349,11 @@ return '-';
                     <div class="space-y-3">
                         <div>
                             <label class="mb-1.5 block text-sm font-medium text-gray-700">CEP</label>
-                            <input v-model="form.cep" type="text" maxlength="9" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20" />
+                            <div class="relative">
+                                <input :value="form.cep" @input="maskCep" @blur="onCepBlur" type="text" maxlength="9" placeholder="00000-000" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20" />
+                                <span v-if="buscandoCep" class="absolute right-3 top-2 text-xs text-gray-400">Buscando...</span>
+                            </div>
+                            <p v-if="cepNaoEncontrado" class="mt-1 text-xs text-red-500">CEP não encontrado.</p>
                         </div>
                         <div>
                             <label class="mb-1.5 block text-sm font-medium text-gray-700">Logradouro</label>
@@ -330,7 +380,10 @@ return '-';
                             </div>
                             <div>
                                 <label class="mb-1.5 block text-sm font-medium text-gray-700">UF</label>
-                                <input v-model="form.estado" type="text" maxlength="2" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm uppercase outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20" />
+                                <select v-model="form.estado" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20">
+                                    <option value="">-</option>
+                                    <option v-for="uf in estados" :key="uf" :value="uf">{{ uf }}</option>
+                                </select>
                             </div>
                         </div>
                     </div>
@@ -339,7 +392,7 @@ return '-';
                 <!-- Observações -->
                 <div>
                     <label class="mb-1.5 block text-sm font-medium text-gray-700">Observações</label>
-                    <textarea v-model="form.observacoes" rows="3" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"></textarea>
+                    <RichText v-model="form.observacoes" min-height="80px" />
                 </div>
 
                 <div class="flex items-center gap-2">

@@ -2,6 +2,7 @@
 
 use App\Http\Middleware\CheckPermission;
 use App\Http\Middleware\EnsureClinicaActive;
+use App\Http\Middleware\EnsureEmailIsVerifiedCustom;
 use App\Http\Middleware\EnsureUniqueSession;
 use App\Http\Middleware\HandleInertiaRequests;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -29,6 +30,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'clinica.active' => EnsureClinicaActive::class,
             'permission' => CheckPermission::class,
             'unique.session' => EnsureUniqueSession::class,
+            'verified' => EnsureEmailIsVerifiedCustom::class,
         ]);
 
         $middleware->preventRequestForgery(except: [

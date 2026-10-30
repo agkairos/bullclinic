@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+
+function pageLabel(label: string): string {
+    return label.replace(/&laquo;/g, '«').replace(/&raquo;/g, '»');
+}
 import { router, Link, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/layouts/AppLayout.vue';
+import RichText from '@/components/RichText.vue';
 
 defineOptions({ layout: AppLayout });
 
@@ -223,8 +228,7 @@ const especies = ['canino', 'felino', 'ave', 'roedor', 'reptil', 'outro'];
                 <button v-if="link.url" @click="router.get(link.url)"
                     class="rounded px-3 py-1.5 text-xs"
                     :class="link.active ? 'bg-primary-500 text-white font-semibold' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'"
-                    v-html="link.label">
-                </button>
+                    >{{ pageLabel(link.label) }}</button>
             </template>
         </div>
     </div>
@@ -325,7 +329,8 @@ const especies = ['canino', 'felino', 'ave', 'roedor', 'reptil', 'outro'];
                         </div>
                         <div>
                             <label class="mb-1 block text-xs font-medium text-gray-600">Peso (kg)</label>
-                            <input v-model="form.peso" type="number" step="0.01" min="0" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500" />
+                            <input v-model="form.peso" type="number" step="0.001" min="0" placeholder="ex: 0.200" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500" />
+                            <p class="mt-1 text-[11px] text-gray-400">Para gramas, use decimal: 200g → 0.200</p>
                         </div>
                         <div>
                             <label class="mb-1 block text-xs font-medium text-gray-600">Microchip</label>
@@ -343,19 +348,19 @@ const especies = ['canino', 'felino', 'ave', 'roedor', 'reptil', 'outro'];
                 <div class="space-y-3">
                     <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600">Alergias</label>
-                        <textarea v-model="form.alergias" rows="2" placeholder="Ex: Amoxicilina, frango..." class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 resize-none"></textarea>
+                        <RichText v-model="form.alergias" placeholder="Ex: Amoxicilina, frango..." min-height="60px" />
                     </div>
                     <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600">Condições especiais</label>
-                        <textarea v-model="form.condicoes_especiais" rows="2" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 resize-none"></textarea>
+                        <RichText v-model="form.condicoes_especiais" min-height="60px" />
                     </div>
                     <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600">Restrições alimentares</label>
-                        <textarea v-model="form.restricoes_alimentares" rows="2" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 resize-none"></textarea>
+                        <RichText v-model="form.restricoes_alimentares" min-height="60px" />
                     </div>
                     <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600">Medicamentos crônicos</label>
-                        <textarea v-model="form.medicamentos_cronicos" rows="2" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 resize-none"></textarea>
+                        <RichText v-model="form.medicamentos_cronicos" min-height="60px" />
                     </div>
                 </div>
             </div>

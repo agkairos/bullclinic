@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Chat;
 
 use App\Http\Controllers\Controller;
+use App\Events\NovaConversaEvent;
 use App\Models\Conversa;
 use App\Models\ConversaMembro;
 use App\Models\User;
@@ -44,10 +45,11 @@ class ConversaController extends Controller
         return Inertia::render('Chat/Index', [
             'conversas' => $conversas,
             'usuarios' => $usuarios,
+            'conversa_ativa_id' => $request->integer('conversa') ?: null,
         ]);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(Request $request): \Illuminate\Http\RedirectResponse
     {
         $request->validate([
             'tipo' => ['required', 'in:individual,grupo,canal'],
@@ -66,7 +68,7 @@ class ConversaController extends Controller
                 ->first();
 
             if ($existente) {
-                return response()->json(['conversa' => $existente]);
+                return redirect()->route('chat.index', ['conversa' => $existente->id]);
             }
         }
 
@@ -87,29 +89,109 @@ class ConversaController extends Controller
             ]);
         }
 
-        return response()->json(['conversa' => $conversa->load('membros.user')]);
+        // Notifica cada membro (exceto o criador) sobre a nova conversa
+        foreach ($request->membros as $membroId) {
+            if ($membroId !== $user->id) {
+                broadcast(new NovaConversaEvent($conversa, $membroId));
+            }
+        }
+
+        return redirect()->route('chat.index', ['conversa' => $conversa->id]);
     }
 
     public function show(Conversa $conversa, Request $request): JsonResponse
     {
         $user = $request->user();
+        $antesDoId = $request->integer('antes_do_id', 0);
 
-        $mensagens = $conversa->mensagens()
+        $query = $conversa->mensagens()
             ->whereNull('deletada_em')
             ->with(['user', 'respostaA.user', 'leituras'])
-            ->orderBy('created_at')
-            ->paginate(50);
+            ->orderByDesc('id');
 
-        // Marca como lidas
-        $conversa->mensagens()
-            ->whereNull('deletada_em')
-            ->where('user_id', '!=', $user->id)
-            ->whereDoesntHave('leituras', fn($q) => $q->where('user_id', $user->id))
-            ->each(fn($msg) => $msg->leituras()->create([
-                'user_id' => $user->id,
-                'lida_em' => now(),
-            ]));
+        if ($antesDoId > 0) {
+            $query->where('id', '<', $antesDoId);
+        }
 
-        return response()->json(['mensagens' => $mensagens]);
+        $mensagens = $query->limit(50)->get()->reverse()->values();
+        $temMais = $antesDoId > 0
+            ? $conversa->mensagens()->whereNull('deletada_em')->where('id', '<', $mensagens->first()?->id ?? $antesDoId)->exists()
+            : $conversa->mensagens()->whereNull('deletada_em')->count() > 50;
+
+        // Marca como lidas apenas na carga inicial e faz broadcast para o remetente
+        if (!$antesDoId) {
+            $conversa->mensagens()
+                ->whereNull('deletada_em')
+                ->where('user_id', '!=', $user->id)
+                ->whereDoesntHave('leituras', fn($q) => $q->where('user_id', $user->id))
+                ->each(function ($msg) use ($user, $conversa) {
+                    $criada = $msg->leituras()->firstOrCreate(
+                        ['user_id' => $user->id],
+                        ['lida_em' => now()]
+                    );
+                    if ($criada->wasRecentlyCreated) {
+                        broadcast(new \App\Events\MensagemLidaEvent($msg->id, $conversa->id, $user->id));
+                    }
+                });
+        }
+
+        return response()->json([
+            'mensagens' => $mensagens,
+            'tem_mais' => $temMais,
+        ]);
+    }
+
+    public function update(Request $request, Conversa $conversa): \Illuminate\Http\RedirectResponse
+    {
+        $request->validate([
+            'nome'    => ['required', 'string', 'max:255'],
+            'membros' => ['required', 'array', 'min:1'],
+            'membros.*' => ['exists:users,id'],
+        ]);
+
+        $user = $request->user();
+        abort_unless($conversa->criado_por_id === $user->id, 403);
+
+        $conversa->update(['nome' => $request->nome]);
+
+        // Sincroniza membros: adiciona novos, remove ausentes (exceto o criador)
+        $novosIds = array_unique(array_merge([$user->id], $request->membros));
+        $atuaisIds = $conversa->membros()->whereNull('saiu_em')->pluck('user_id')->toArray();
+
+        // Adiciona quem não está
+        foreach ($novosIds as $id) {
+            if (!in_array($id, $atuaisIds)) {
+                ConversaMembro::create([
+                    'conversa_id' => $conversa->id,
+                    'user_id'     => $id,
+                    'entrou_em'   => now(),
+                ]);
+                broadcast(new NovaConversaEvent($conversa, $id));
+            }
+        }
+
+        // Remove quem saiu (exceto criador)
+        foreach ($atuaisIds as $id) {
+            if (!in_array($id, $novosIds) && $id !== $user->id) {
+                $conversa->membros()->where('user_id', $id)->update(['saiu_em' => now()]);
+            }
+        }
+
+        return redirect()->route('chat.index', ['conversa' => $conversa->id]);
+    }
+
+    public function destroy(Request $request, Conversa $conversa): \Illuminate\Http\RedirectResponse
+    {
+        $user = $request->user();
+
+        if ($conversa->criado_por_id === $user->id) {
+            // Criador: exclui a conversa inteira
+            $conversa->delete();
+        } else {
+            // Membro comum: sai da conversa
+            $conversa->membros()->where('user_id', $user->id)->update(['saiu_em' => now()]);
+        }
+
+        return redirect()->route('chat.index');
     }
 }

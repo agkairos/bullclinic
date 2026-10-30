@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: DejaVu Sans, sans-serif; font-size: 11px; color: #1f2937; line-height: 1.5; }
+    body { font-family: DejaVu Sans, sans-serif; font-size: 11px; color: #1f2937; line-height: 1.5; padding: 20px; }
     .header { border-bottom: 2px solid #00c1b3; padding-bottom: 12px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; }
     .clinic-name { font-size: 16px; font-weight: bold; color: #00c1b3; }
     .doc-title { font-size: 13px; font-weight: bold; color: #374151; margin-top: 2px; }
@@ -98,13 +98,13 @@
             </span>
         </div>
         @if($c->anamnese)
-        <div class="text-block"><div class="text-label">Anamnese</div>{{ $c->anamnese }}</div>
+        <div class="text-block"><div class="text-label">Anamnese</div>{!! $c->anamnese !!}</div>
         @endif
         @if($c->diagnostico)
-        <div class="text-block"><div class="text-label">Diagnóstico</div>{{ $c->diagnostico }}</div>
+        <div class="text-block"><div class="text-label">Diagnóstico</div>{!! $c->diagnostico !!}</div>
         @endif
         @if($c->prognostico)
-        <div class="text-block"><div class="text-label">Prognóstico</div>{{ $c->prognostico }}</div>
+        <div class="text-block"><div class="text-label">Prognóstico</div>{!! $c->prognostico !!}</div>
         @endif
         @if($c->procedimentos->count())
         <div style="margin-top:6px;font-size:10px;color:#374151"><strong>Procedimentos:</strong>

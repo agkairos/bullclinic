@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { router, Link } from '@inertiajs/vue3';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { useCep } from '@/composables/useCep';
+import RichText from '@/components/RichText.vue';
 
 defineOptions({ layout: AppLayout });
 
@@ -136,7 +137,7 @@ function salvar() {
 
                 <div class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
                     <h2 class="mb-4 text-sm font-semibold text-gray-700">Observações</h2>
-                    <textarea v-model="form.observacoes" rows="3" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 resize-none"></textarea>
+                    <RichText v-model="form.observacoes" min-height="80px" />
                 </div>
             </div>
 

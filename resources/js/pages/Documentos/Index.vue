@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+
+function pageLabel(label: string): string {
+    return label.replace(/&laquo;/g, '«').replace(/&raquo;/g, '»');
+}
 import { router } from '@inertiajs/vue3';
 import AppLayout from '@/layouts/AppLayout.vue';
 
@@ -25,7 +29,7 @@ type UploadItem = {
     nome: string;
     categoria: string;
     progresso: number;
-    status: 'aguardando' | 'enviando' | 'salvando' | 'concluido' | 'erro';
+    status: 'aguardando' | 'enviando' | 'processando' | 'concluido' | 'erro';
     erro: string | null;
 };
 
@@ -37,15 +41,30 @@ const props = defineProps<{
         last_page: number;
     };
     storage: { usado_gb: number; limite_gb: number; percentual: number };
-    filters: { search?: string; categoria?: string };
+    filters: { search?: string; categoria?: string; data_inicio?: string; data_fim?: string };
 }>();
 
 // ── Filtros ───────────────────────────────────────────────────────────────────
 const search = ref(props.filters.search ?? '');
 const filtroCategoria = ref(props.filters.categoria ?? '');
+const dataInicio = ref(props.filters.data_inicio ?? '');
+const dataFim = ref(props.filters.data_fim ?? '');
 
 function buscar() {
-    router.get('/documentos', { search: search.value, categoria: filtroCategoria.value }, { preserveState: true, replace: true });
+    router.get('/documentos', {
+        search: search.value,
+        categoria: filtroCategoria.value,
+        data_inicio: dataInicio.value || undefined,
+        data_fim: dataFim.value || undefined,
+    }, { preserveState: true, replace: true });
+}
+
+function limparFiltros() {
+    search.value = '';
+    filtroCategoria.value = '';
+    dataInicio.value = '';
+    dataFim.value = '';
+    buscar();
 }
 
 // ── Drag & Drop ───────────────────────────────────────────────────────────────
@@ -116,52 +135,42 @@ async function uploadItem(item: UploadItem) {
     item.progresso = 0;
 
     try {
-        // 1. Obter URL pré-assinada (servidor valida limite de storage)
-        const res = await fetch('/documentos/presigned-url', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrf(), 'Accept': 'application/json' },
-            body: JSON.stringify({
-                nome: item.nome,
-                mime_type: item.file.type || 'application/octet-stream',
-                tamanho_bytes: item.file.size,
-            }),
-        });
+        // Upload através do servidor Laravel (igual aos outros módulos)
+        const formData = new FormData();
+        formData.append('arquivo', item.file);
+        formData.append('nome', item.nome);
+        formData.append('categoria', item.categoria);
 
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error ?? 'Erro ao gerar URL de upload.');
-        }
-
-        const { upload_url, arquivo_url } = await res.json();
-
-        // 2. Upload direto para o S3 via XHR com progresso real
         await new Promise<void>((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            xhr.open('PUT', upload_url);
-            xhr.setRequestHeader('Content-Type', item.file.type || 'application/octet-stream');
+            xhr.open('POST', '/documentos');
+            xhr.setRequestHeader('X-XSRF-TOKEN', getCsrf());
+            xhr.setRequestHeader('Accept', 'application/json');
+            
             xhr.upload.onprogress = (e) => {
-                if (e.lengthComputable) item.progresso = Math.round((e.loaded / e.total) * 100);
+                if (e.lengthComputable) {
+                    const progress = Math.round((e.loaded / e.total) * 100);
+                    item.progresso = progress;
+                    // Quando upload completo, servidor está processando
+                    if (progress === 100) {
+                        item.status = 'processando';
+                    }
+                }
             };
-            xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`S3 erro ${xhr.status}`));
+
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve();
+                } else {
+                    const err = JSON.parse(xhr.responseText);
+                    reject(new Error(err.error ?? err.message ?? `Erro ${xhr.status}`));
+                }
+            };
+
             xhr.onerror = () => reject(new Error('Falha de rede.'));
-            xhr.send(item.file);
+            xhr.send(formData);
         });
 
-        // 3. Salvar metadados no servidor
-        item.status = 'salvando';
-        const saveRes = await fetch('/documentos', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': getCsrf(), 'Accept': 'application/json' },
-            body: JSON.stringify({
-                nome: item.nome,
-                arquivo_url,
-                mime_type: item.file.type || 'application/octet-stream',
-                tamanho_bytes: item.file.size,
-                categoria: item.categoria,
-            }),
-        });
-
-        if (!saveRes.ok) throw new Error('Erro ao salvar metadados.');
         item.status = 'concluido';
     } catch (e: any) {
         item.status = 'erro';
@@ -171,12 +180,43 @@ async function uploadItem(item: UploadItem) {
 
 // ── Preview ───────────────────────────────────────────────────────────────────
 const preview = ref<Documento | null>(null);
+const previewUrl = ref<string | null>(null);
+const loadingPreview = ref(false);
 
-function abrirPreview(doc: Documento) {
+async function abrirPreview(doc: Documento) {
     if (doc.mime_type?.startsWith('image/') || doc.mime_type === 'application/pdf') {
         preview.value = doc;
+        loadingPreview.value = true;
+        previewUrl.value = null;
+        
+        try {
+            // Obter URL assinada temporária
+            const res = await fetch(`/documentos/${doc.id}/signed-url`, {
+                headers: { 'Accept': 'application/json' }
+            });
+            const data = await res.json();
+            previewUrl.value = data.url;
+        } catch (e) {
+            console.error('Erro ao obter URL:', e);
+            preview.value = null;
+        } finally {
+            loadingPreview.value = false;
+        }
     } else {
-        window.open(doc.arquivo_url, '_blank');
+        // Para outros tipos, baixar diretamente
+        baixarDocumento(doc);
+    }
+}
+
+async function baixarDocumento(doc: Documento) {
+    try {
+        const res = await fetch(`/documentos/${doc.id}/signed-url`, {
+            headers: { 'Accept': 'application/json' }
+        });
+        const data = await res.json();
+        window.open(data.url, '_blank');
+    } catch (e) {
+        console.error('Erro ao baixar documento:', e);
     }
 }
 
@@ -307,8 +347,13 @@ const storageColor = computed(() => {
                                 <span class="shrink-0 text-[10px] text-gray-400">{{ fmtBytes(item.file.size) }}</span>
                             </div>
                             <!-- Barra de progresso -->
-                            <div v-if="item.status === 'enviando' || item.status === 'salvando'" class="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-                                <div class="h-full rounded-full bg-primary-400 transition-all" :style="`width:${item.progresso}%`"></div>
+                            <div v-if="item.status === 'enviando' || item.status === 'processando'" class="space-y-1">
+                                <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                                    <div class="h-full rounded-full bg-primary-400 transition-all" :style="`width:${item.progresso}%`"></div>
+                                </div>
+                                <p v-if="item.status === 'processando'" class="text-[10px] text-gray-400">
+                                    Salvando no servidor...
+                                </p>
                             </div>
                             <p v-if="item.status === 'erro'" class="mt-0.5 text-xs text-red-500">{{ item.erro }}</p>
                         </div>
@@ -317,7 +362,9 @@ const storageColor = computed(() => {
                             <svg v-if="item.status === 'concluido'" class="ml-auto h-5 w-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
                             <svg v-else-if="item.status === 'erro'" class="ml-auto h-5 w-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                             <span v-else-if="item.status === 'enviando'" class="text-xs font-semibold text-primary-500">{{ item.progresso }}%</span>
-                            <span v-else-if="item.status === 'salvando'" class="text-xs text-gray-400">Salvando...</span>
+                            <div v-else-if="item.status === 'processando'" class="ml-auto flex items-center justify-end">
+                                <div class="h-4 w-4 animate-spin rounded-full border-2 border-gray-200 border-t-primary-500"></div>
+                            </div>
                             <button v-else @click="removerDaFila(item.id)" class="ml-auto text-gray-300 hover:text-gray-500">
                                 <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                             </button>
@@ -343,6 +390,23 @@ const storageColor = computed(() => {
                 <option value="imagem">Imagem</option>
                 <option value="outro">Outro</option>
             </select>
+            <div>
+                <input v-model="dataInicio" type="date"
+                    class="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500"
+                    placeholder="Data início" />
+            </div>
+            <div>
+                <input v-model="dataFim" type="date"
+                    class="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500"
+                    placeholder="Data fim" />
+            </div>
+            <button @click="buscar" class="rounded-lg bg-primary-500 px-4 py-2 text-sm text-white hover:bg-primary-600">
+                Filtrar
+            </button>
+            <button v-if="search || filtroCategoria || dataInicio || dataFim" @click="limparFiltros"
+                class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">
+                Limpar
+            </button>
         </div>
 
         <!-- Lista de documentos -->
@@ -387,10 +451,10 @@ const storageColor = computed(() => {
                         <td class="px-5 py-3 text-xs text-gray-500">{{ doc.created_at }}</td>
                         <td class="px-5 py-3 text-right">
                             <div class="flex items-center justify-end gap-1">
-                                <a :href="doc.arquivo_url" target="_blank"
+                                <button @click="baixarDocumento(doc)"
                                     class="rounded p-1 text-gray-400 hover:text-primary-500" title="Baixar">
                                     <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                                </a>
+                                </button>
                                 <button @click="excluir(doc)" class="rounded p-1 text-gray-400 hover:text-red-500" title="Excluir">
                                     <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6m4-6v6"/><path d="M9 6V4h6v2"/></svg>
                                 </button>
@@ -406,8 +470,8 @@ const storageColor = computed(() => {
                     <button v-if="link.url" @click="router.get(link.url)"
                         class="rounded px-2.5 py-1 text-xs"
                         :class="link.active ? 'bg-primary-500 text-white' : 'text-gray-500 hover:bg-gray-100'"
-                        v-html="link.label" />
-                    <span v-else class="px-1 text-xs text-gray-300" v-html="link.label" />
+                        >{{ pageLabel(link.label) }}</button>
+                    <span v-else class="px-1 text-xs text-gray-300">{{ pageLabel(link.label) }}</span>
                 </template>
             </div>
         </div>
@@ -419,21 +483,27 @@ const storageColor = computed(() => {
             <div class="flex shrink-0 items-center justify-between border-b border-gray-100 px-5 py-3">
                 <span class="max-w-lg truncate text-sm font-medium text-gray-800">{{ preview.nome }}</span>
                 <div class="flex items-center gap-2">
-                    <a :href="preview.arquivo_url" target="_blank" download
+                    <button @click="baixarDocumento(preview)"
                         class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50">
                         Baixar
-                    </a>
+                    </button>
                     <button @click="preview = null" class="text-gray-400 hover:text-gray-600">
                         <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                 </div>
             </div>
             <div class="flex-1 overflow-auto p-2">
-                <img v-if="preview.mime_type?.startsWith('image/')"
-                    :src="preview.arquivo_url" :alt="preview.nome"
+                <div v-if="loadingPreview" class="flex h-[75vh] items-center justify-center">
+                    <div class="text-center">
+                        <div class="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-primary-500"></div>
+                        <p class="text-sm text-gray-400">Carregando...</p>
+                    </div>
+                </div>
+                <img v-else-if="preview.mime_type?.startsWith('image/') && previewUrl"
+                    :src="previewUrl" :alt="preview.nome"
                     class="mx-auto max-h-[75vh] rounded object-contain" />
-                <iframe v-else-if="preview.mime_type === 'application/pdf'"
-                    :src="preview.arquivo_url"
+                <iframe v-else-if="preview.mime_type === 'application/pdf' && previewUrl"
+                    :src="previewUrl"
                     class="h-[75vh] w-full rounded border-0"></iframe>
             </div>
         </div>

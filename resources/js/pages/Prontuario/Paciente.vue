@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import { router, Link } from '@inertiajs/vue3';
 import AppLayout from '@/layouts/AppLayout.vue';
 
@@ -41,17 +41,39 @@ const props = defineProps<{
             veterinario: { name: string };
         }>;
     };
+    agendamento?: {
+        id: number;
+        primeira_consulta: boolean;
+        urgencia: boolean;
+    } | null;
 }>();
+
+function tipoConsultaDoAgendamento(): string {
+    if (!props.agendamento) return 'retorno';
+    if (props.agendamento.urgencia) return 'emergencia';
+    if (props.agendamento.primeira_consulta) return 'primeira_consulta';
+    return 'retorno';
+}
 
 const abaAtiva = ref<'historico' | 'vacinas'>('historico');
 const showNovaConsulta = ref(false);
-const novaConsultaForm = ref({ tipo_consulta: 'primeira_consulta', agendamento_id: '' });
+const novaConsultaForm = ref({
+    tipo_consulta: tipoConsultaDoAgendamento(),
+    agendamento_id: props.agendamento?.id ?? '',
+});
 
 function abrirConsulta() {
     router.post(`/prontuarios/paciente/${props.paciente.id}/abrir`, novaConsultaForm.value, {
         onSuccess: () => { showNovaConsulta.value = false; },
     });
 }
+
+// Se veio da agenda com agendamento, abre a consulta direto sem precisar de clique extra
+onMounted(() => {
+    if (props.agendamento) {
+        abrirConsulta();
+    }
+});
 
 function tipoLabel(t: string) {
     return { primeira_consulta: 'Primeira consulta', retorno: 'Retorno', emergencia: 'Emergência' }[t] ?? t;
@@ -164,7 +186,7 @@ function idadeLabel(data: string | null) {
                                 </div>
                             </div>
                             <p class="text-xs text-gray-400">{{ c.veterinario.name }}</p>
-                            <p v-if="c.diagnostico" class="mt-1.5 text-sm text-gray-600">{{ c.diagnostico }}</p>
+                            <div v-if="c.diagnostico" class="mt-1.5 text-sm text-gray-600 prose prose-sm max-w-none" v-html="c.diagnostico"></div>
                             <div v-if="c.receitas.length || c.exames.length || c.procedimentos.length" class="mt-2 flex gap-2">
                                 <span v-if="c.receitas.length" class="rounded bg-blue-50 px-2 py-0.5 text-[11px] text-blue-600">{{ c.receitas.length }} receita(s)</span>
                                 <span v-if="c.exames.length" class="rounded bg-purple-50 px-2 py-0.5 text-[11px] text-purple-600">{{ c.exames.length }} exame(s)</span>

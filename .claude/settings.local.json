@@ -5,7 +5,14 @@
       "Bash(php artisan tinker --execute=\":*)",
       "Bash(find c:/laragon/www/bullclinic2/resources/js -type f \\\\\\(-name *.js -o -name *.ts -o -name *.jsx -o -name *.tsx \\\\\\))",
       "Bash(find c:/laragon/www/bullclinic2/config -type f -name *.php)",
-      "Bash(composer dump-autoload:*)"
+      "Bash(composer dump-autoload:*)",
+      "Bash(find /c/laragon/www/bullclinic2/app/Models -name \"*.php\" -exec grep -l \"fillable\\\\|guarded\" {})",
+      "Bash(grep -A 5 \"protected $fillable\" /c/laragon/www/bullclinic2/app/Models/Cliente.php)",
+      "Bash(grep -r \"unset\\\\|$guarded\" /c/laragon/www/bullclinic2/app/Models --include=\"*.php\")",
+      "Bash(ls c:/laragon/www/bullclinic2/app/Models/Horario*)",
+      "Bash(/dev/null ls:*)",
+      "Bash(head -10 grep -n \"userClinicas\\\\|UserClinica\" c:/laragon/www/bullclinic2/app/Models/User.php)",
+      "Bash(grep -l \"receita\\\\|procedimento\\\\|vacinacao\" /c/laragon/www/bullclinic2/database/migrations/*.php)"
     ]
   }
 }

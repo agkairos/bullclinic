@@ -13,6 +13,8 @@ type Plano = {
     preco_mensal: string;
     preco_anual: string;
     limite_usuarios: number;
+    limite_clinicas: number;
+    clinicas_ilimitadas: boolean;
     limite_storage_gb: number;
     consultas_ilimitadas: boolean;
     limite_consultas_mes: number;
@@ -187,13 +189,19 @@ const faturaStatusLabel: Record<string, string> = {
 
             <!-- Status atual -->
             <div class="flex items-center gap-3">
-                <span v-if="clinica.data_vencimento" class="text-xs text-gray-400">
+                <span v-if="conta.limite_unidades" class="text-xs text-gray-400">
+                    {{ conta.total_unidades }} de {{ conta.limite_unidades }} {{ conta.limite_unidades === 1 ? 'unidade' : 'unidades' }}
+                </span>
+                <span v-else-if="conta.total_unidades" class="text-xs text-gray-400">
+                    {{ conta.total_unidades }} {{ conta.total_unidades === 1 ? 'unidade' : 'unidades' }}
+                </span>
+                <span v-if="conta.data_vencimento" class="text-xs text-gray-400">
                     Vence em {{ conta.data_vencimento }}
                 </span>
                 <span class="rounded-full px-3 py-1 text-xs font-medium" :class="statusBadge">
                     {{ statusLabel }}
                 </span>
-                <button v-if="clinica.stripe_subscription_id" @click="abrirPortal"
+                <button v-if="conta.stripe_subscription_id" @click="abrirPortal"
                     class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50">
                     Gerenciar assinatura
                 </button>
@@ -289,6 +297,10 @@ const faturaStatusLabel: Record<string, string> = {
                         </li>
                         <li class="flex items-center gap-2">
                             <svg class="h-3.5 w-3.5 shrink-0 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                            {{ plano.clinicas_ilimitadas ? 'Unidades ilimitadas' : `${plano.limite_clinicas} ${plano.limite_clinicas === 1 ? 'unidade' : 'unidades'}` }}
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <svg class="h-3.5 w-3.5 shrink-0 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
                             {{ plano.limite_storage_gb }} GB de armazenamento
                         </li>
                         <li class="flex items-center gap-2" :class="plano.chat_audio ? 'text-gray-500' : 'text-gray-300'">
@@ -324,7 +336,7 @@ const faturaStatusLabel: Record<string, string> = {
             </div>
 
             <!-- Cancelar assinatura -->
-            <div v-if="clinica.stripe_subscription_id" class="mt-8 text-center">
+            <div v-if="conta.stripe_subscription_id" class="mt-8 text-center">
                 <button @click="cancelarAssinatura" class="text-xs text-red-400 hover:text-red-600 hover:underline">
                     Cancelar assinatura
                 </button>

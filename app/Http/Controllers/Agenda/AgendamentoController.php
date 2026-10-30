@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Agenda;
 use App\Http\Controllers\Controller;
 use App\Models\Agendamento;
 use App\Models\Cliente;
+use App\Models\Especialidade;
+use App\Models\HorarioAtendimento;
 use App\Models\TipoServico;
 use App\Models\User;
 use App\Services\AuditService;
@@ -21,6 +23,7 @@ class AgendamentoController extends Controller
     public function index(Request $request): Response
     {
         $semana = $request->semana ?? now()->startOfWeek()->toDateString();
+        $clinicaId = $request->user()->clinica_ativa_id;
 
         $inicio = \Carbon\Carbon::parse($semana)->startOfWeek();
         $fim = $inicio->copy()->endOfWeek();
@@ -30,18 +33,58 @@ class AgendamentoController extends Controller
             ->when($request->veterinario_id, fn($q) => $q->where('veterinario_id', $request->veterinario_id))
             ->get();
 
-        $veterinarios = User::whereHas('userClinicas', fn($q) => $q
-            ->where('clinica_id', $request->user()->clinica_ativa_id)
-            ->where('ativo', true)
-        )->get(['id', 'name', 'avatar', 'crmv']);
+        // Veterinários da clínica com suas especialidades
+        $veterinariosQuery = User::with(['especialidades' => function ($q) use ($clinicaId) {
+                $q->wherePivot('clinica_id', $clinicaId);
+            }])
+            ->whereHas('userClinicas', fn($q) => $q
+                ->where('clinica_id', $clinicaId)
+                ->where('ativo', true)
+            );
+
+        // Filtro por especialidade
+        if ($request->especialidade_id) {
+            $veterinariosQuery->whereHas('especialidades', fn($q) => $q
+                ->where('especialidade_id', $request->especialidade_id)
+                ->where('user_especialidades.clinica_id', $clinicaId)
+            );
+        }
+
+        $veterinarios = $veterinariosQuery->get(['id', 'name', 'avatar', 'crmv']);
+
+        // Mapear especialidades de cada veterinário
+        $veterinarios = $veterinarios->map(function ($vet) {
+            return [
+                'id' => $vet->id,
+                'name' => $vet->name,
+                'avatar' => $vet->avatar,
+                'crmv' => $vet->crmv,
+                'especialidades' => $vet->especialidades->pluck('nome')->toArray(),
+            ];
+        });
 
         $tiposServico = TipoServico::where('ativo', true)->get(['id', 'nome', 'cor', 'duracao_minutos', 'preco']);
+
+        // Especialidades ativas da clínica
+        $especialidades = Especialidade::where('clinica_id', $clinicaId)
+            ->where('ativo', true)
+            ->orderBy('nome')
+            ->get(['id', 'nome']);
+
+        // Dias da semana com ao menos um horário ativo na clínica (0=dom … 6=sáb)
+        $diasAtivos = HorarioAtendimento::where('clinica_id', $clinicaId)
+            ->where('ativo', true)
+            ->pluck('dia_semana')
+            ->unique()
+            ->values();
 
         return Inertia::render('Agenda/Index', [
             'agendamentos' => $agendamentos,
             'veterinarios' => $veterinarios,
             'tipos_servico' => $tiposServico,
+            'especialidades' => $especialidades,
             'semana_inicio' => $inicio->toDateString(),
+            'dias_ativos' => $diasAtivos,
         ]);
     }
 

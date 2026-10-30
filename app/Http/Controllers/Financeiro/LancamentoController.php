@@ -16,29 +16,56 @@ class LancamentoController extends Controller
     public function index(Request $request): Response
     {
         $periodo = $request->periodo ?? now()->format('Y-m');
-        [$ano, $mes] = explode('-', $periodo);
 
-        $receitas = LancamentoFinanceiro::with(['categoria', 'cliente'])
-            ->where('tipo', 'receita')
-            ->whereYear('data_vencimento', $ano)
-            ->whereMonth('data_vencimento', $mes)
-            ->when($request->status, fn($q) => $q->where('status', $request->status))
-            ->orderByDesc('data_vencimento')
-            ->get();
+        // Queries base para receitas e despesas
+        $receitasQuery = LancamentoFinanceiro::with([
+            'categoria',
+            'cliente',
+            'consulta.agendamento.tipoServico',
+            'consulta.procedimentos',
+            'consulta.produtosUtilizados.produto',
+            'consulta.receitas.itens.produto',
+        ])->where('tipo', 'receita');
 
-        $despesas = LancamentoFinanceiro::with(['categoria', 'fornecedor'])
-            ->where('tipo', 'despesa')
-            ->whereYear('data_vencimento', $ano)
-            ->whereMonth('data_vencimento', $mes)
-            ->when($request->status, fn($q) => $q->where('status', $request->status))
-            ->orderByDesc('data_vencimento')
-            ->get();
+        $despesasQuery = LancamentoFinanceiro::with(['categoria', 'fornecedor'])
+            ->where('tipo', 'despesa');
+
+        // Se houver filtros de data específicos, usar eles; senão usar filtro por mês
+        if ($request->filled('data_inicio') || $request->filled('data_fim')) {
+            $receitasQuery
+                ->when($request->data_inicio, fn($q) => $q->whereDate('data_vencimento', '>=', $request->data_inicio))
+                ->when($request->data_fim, fn($q) => $q->whereDate('data_vencimento', '<=', $request->data_fim));
+
+            $despesasQuery
+                ->when($request->data_inicio, fn($q) => $q->whereDate('data_vencimento', '>=', $request->data_inicio))
+                ->when($request->data_fim, fn($q) => $q->whereDate('data_vencimento', '<=', $request->data_fim));
+        } else {
+            // Comportamento padrão: filtrar por mês
+            [$ano, $mes] = explode('-', $periodo);
+            $receitasQuery->whereYear('data_vencimento', $ano)->whereMonth('data_vencimento', $mes);
+            $despesasQuery->whereYear('data_vencimento', $ano)->whereMonth('data_vencimento', $mes);
+        }
+
+        // Aplicar filtro de status e ordenação
+        $receitasQuery->when($request->status, fn($q) => $q->where('status', $request->status))
+            ->orderByDesc('data_vencimento');
+
+        $despesasQuery->when($request->status, fn($q) => $q->where('status', $request->status))
+            ->orderByDesc('data_vencimento');
+
+        // Paginar resultados
+        $receitas = (clone $receitasQuery)->paginate(20)->withQueryString();
+        $despesas = (clone $despesasQuery)->paginate(20)->withQueryString();
+
+        // Calcular resumo com TODOS os lançamentos do período (sem paginação)
+        $todasReceitas = $receitasQuery->get();
+        $todasDespesas = $despesasQuery->get();
 
         $resumo = [
-            'total_receitas' => $receitas->where('status', 'pago')->sum('valor'),
-            'total_despesas' => $despesas->where('status', 'pago')->sum('valor'),
-            'a_receber' => $receitas->whereIn('status', ['pendente', 'atrasado'])->sum('valor'),
-            'a_pagar' => $despesas->whereIn('status', ['pendente', 'atrasado'])->sum('valor'),
+            'total_receitas' => $todasReceitas->where('status', 'pago')->sum('valor'),
+            'total_despesas' => $todasDespesas->where('status', 'pago')->sum('valor'),
+            'a_receber' => $todasReceitas->whereIn('status', ['pendente', 'atrasado'])->sum('valor'),
+            'a_pagar' => $todasDespesas->whereIn('status', ['pendente', 'atrasado'])->sum('valor'),
         ];
         $resumo['saldo'] = $resumo['total_receitas'] - $resumo['total_despesas'];
 
@@ -68,6 +95,7 @@ class LancamentoController extends Controller
             'categorias' => $categorias,
             'periodo' => $periodo,
             'grafico' => $grafico,
+            'filters' => $request->only('periodo', 'status', 'data_inicio', 'data_fim'),
         ]);
     }
 

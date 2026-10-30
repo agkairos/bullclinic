@@ -2,22 +2,101 @@
 
 namespace App\Models;
 
+use Aws\S3\S3Client;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Cache;
 
 class ResultadoExame extends Model
 {
-    protected $table = 'resultados_exames';
+  protected $table = 'resultados_exames';
 
-    protected $fillable = [
-        'exame_solicitado_id', 'arquivo_url', 'arquivo_tamanho_bytes',
-        'interpretacao', 'recebido_em',
-    ];
+  protected $fillable = [
+    'exame_solicitado_id',
+    'arquivo_url',
+    'arquivo_tamanho_bytes',
+    'interpretacao',
+    'recebido_em',
+  ];
 
-    protected $casts = ['recebido_em' => 'datetime'];
+  protected $casts = ['recebido_em' => 'datetime'];
 
-    public function exame(): BelongsTo
-    {
-        return $this->belongsTo(ExameSolicitado::class, 'exame_solicitado_id');
-    }
+  protected static function booted(): void
+  {
+    static::updated(function (ResultadoExame $resultado) {
+      if ($resultado->isDirty('arquivo_url')) {
+        Cache::forget("resultado_exame_signed_{$resultado->id}");
+      }
+    });
+
+    static::deleted(function (ResultadoExame $resultado) {
+      Cache::forget("resultado_exame_signed_{$resultado->id}");
+    });
+  }
+
+  protected function arquivoUrl(): Attribute
+  {
+    return Attribute::make(
+      get: function ($value) {
+        if (!$value) {
+          return null;
+        }
+
+        // Cache da URL assinada por 50 minutos
+        $cacheKey = "resultado_exame_signed_{$this->id}";
+
+        return Cache::remember($cacheKey, now()->addMinutes(50), function () use ($value) {
+          // Se é path relativo do S3
+          if (!str_starts_with($value, 'http')) {
+            $config = config('filesystems.disks.s3_images');
+            return $this->generateSignedUrl($config, $config['bucket'], $value);
+          }
+
+          // Se já é URL S3
+          if (str_contains($value, '.s3.') || str_contains($value, 's3.amazonaws.com')) {
+            $config = config('filesystems.disks.s3_images');
+            $bucket = $config['bucket'];
+
+            // Extrair path da URL
+            if (preg_match('#/' . preg_quote($bucket, '#') . '/(.+)$#', $value, $m)) {
+              $path = $m[1];
+            } else {
+              $parsed = parse_url($value);
+              $path = ltrim($parsed['path'] ?? '', '/');
+            }
+
+            return $this->generateSignedUrl($config, $bucket, $path);
+          }
+
+          return $value;
+        });
+      },
+    );
+  }
+
+  private function generateSignedUrl(array $config, string $bucket, string $path): string
+  {
+    $client = new S3Client([
+      'version' => 'latest',
+      'region' => $config['region'],
+      'credentials' => [
+        'key' => $config['key'],
+        'secret' => $config['secret'],
+      ],
+    ]);
+
+    $cmd = $client->getCommand('GetObject', [
+      'Bucket' => $bucket,
+      'Key' => $path,
+    ]);
+
+    $request = $client->createPresignedRequest($cmd, '+1 hour');
+    return (string) $request->getUri();
+  }
+
+  public function exame(): BelongsTo
+  {
+    return $this->belongsTo(ExameSolicitado::class, 'exame_solicitado_id');
+  }
 }

@@ -51,18 +51,18 @@ class HandleInertiaRequests extends Middleware
                         )
                     )->pluck('nome')->toArray()
                     : [],
-                'is_super_admin' => $user?->isSuperAdmin() ?? false,
+                'is_super_admin' => ($user && $user->clinica_ativa_id) ? $user->isSuperAdmin() : false,
             ],
-            'clinicas' => $user ? $user->clinicas()
+            'clinicas' => ($user && $user->conta_ativa_id) ? $user->clinicas()
                 ->wherePivot('ativo', true)
-                ->when($user->conta_ativa_id, fn($q) => $q->where('clinicas.conta_id', $user->conta_ativa_id))
+                ->where('clinicas.conta_id', $user->conta_ativa_id)
                 ->get(['clinicas.id', 'nome', 'logo'])
                 : [],
             'flash' => [
                 'success' => $request->session()->get('success'),
                 'error' => $request->session()->get('error'),
             ],
-            'chat_nao_lidas' => $user ? Conversa::withoutGlobalScope('clinica')
+            'chat_nao_lidas' => ($user && $user->clinica_ativa_id) ? Conversa::withoutGlobalScope('clinica')
                 ->where('clinica_id', $user->clinica_ativa_id)
                 ->whereHas('membros', fn($q) => $q->where('user_id', $user->id))
                 ->withCount([

@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { router, Link } from '@inertiajs/vue3';
+import { router, Link, useForm } from '@inertiajs/vue3';
 import AppLayout from '@/layouts/AppLayout.vue';
+import RichText from '@/components/RichText.vue';
 
 defineOptions({ layout: AppLayout });
 
 type Agendamento = {
     id: number;
-    data: string;
+    data: string; // cast 'date' → serializado como ISO datetime pelo Laravel
     hora_inicio: string;
     hora_fim: string;
     status: string;
@@ -24,9 +25,11 @@ type Agendamento = {
 
 const props = defineProps<{
     agendamentos: Agendamento[];
-    veterinarios: Array<{ id: number; name: string; avatar: string | null; crmv?: string | null }>;
+    veterinarios: Array<{ id: number; name: string; avatar: string | null; crmv?: string | null; especialidades: string[] }>;
     tipos_servico: Array<{ id: number; nome: string; cor: string; duracao_minutos: number }>;
+    especialidades: Array<{ id: number; nome: string }>;
     semana_inicio: string;
+    dias_ativos: number[]; // 0=dom, 1=seg … 6=sáb
 }>();
 
 // ── Semana / navegação ────────────────────────────────────────────────────────
@@ -48,21 +51,103 @@ const horas = Array.from({ length: 16 }, (_, i) => `${String(i + 6).padStart(2, 
 
 const agora = new Date();
 const horaAtualMinutos = agora.getHours() * 60 + agora.getMinutes();
-const horaAtualTop = computed(() => Math.max(0, ((horaAtualMinutos - 360) / 60) * 64));
+const horaAtualTop = computed(() => Math.max(0, ((horaAtualMinutos - 360) / 60) * 96));
 const horaAtualLabel = computed(() => `${String(agora.getHours()).padStart(2, '0')}:${String(agora.getMinutes()).padStart(2, '0')}`);
 
 function agendamentoPosicao(ag: Agendamento) {
     const [h, m] = ag.hora_inicio.split(':').map(Number);
     const [hf, mf] = ag.hora_fim.split(':').map(Number);
-    const top = ((h * 60 + m) - 360) / 60 * 64;
-    const height = ((hf * 60 + mf) - (h * 60 + m)) / 60 * 64;
-    return { top: Math.max(0, top), height: Math.max(24, height) };
+    const top = ((h * 60 + m) - 360) / 60 * 96;
+    const height = ((hf * 60 + mf) - (h * 60 + m)) / 60 * 96;
+    return { top: Math.max(0, top), height: Math.max(80, height) };
+}
+
+function toMin(t: string) {
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+}
+
+// Retorna { col, total } para cada agendamento de um dia, calculando colunas por sobreposição
+function styleCardSemana(ag: Agendamento, ags: Agendamento[]): Record<string, string> {
+    const pos = agendamentoPosicao(ag);
+    const cols = calcularColunas(ags);
+    const { col, total } = cols.get(ag.id) ?? { col: 0, total: 1 };
+    const cor = vetCor.value[ag.veterinario.id];
+    const pct = 100 / total;
+    return {
+        top: pos.top + 'px',
+        height: pos.height + 'px',
+        left: `calc(${col * pct}% + 2px)`,
+        width: `calc(${pct}% - 4px)`,
+        backgroundColor: blendWithWhite(cor, 0.12),
+        border: '1px solid ' + blendWithWhite(cor, 0.4),
+        borderLeft: '4px solid ' + cor,
+        outline: '2px solid white',
+    };
+}
+
+function calcularColunas(ags: Agendamento[]): Map<number, { col: number; total: number }> {
+    const result = new Map<number, { col: number; total: number }>();
+    // Ordena por hora de início
+    const sorted = [...ags].sort((a, b) => toMin(a.hora_inicio) - toMin(b.hora_inicio));
+
+    // Grupos de sobreposição: cada grupo contém agendamentos que se intersectam
+    const groups: Agendamento[][] = [];
+
+    for (const ag of sorted) {
+        const agStart = toMin(ag.hora_inicio);
+        const agEnd = toMin(ag.hora_fim);
+        // Tenta encaixar num grupo existente
+        let placed = false;
+        for (const group of groups) {
+            const groupEnd = Math.max(...group.map(g => toMin(g.hora_fim)));
+            if (agStart < groupEnd) {
+                group.push(ag);
+                placed = true;
+                break;
+            }
+        }
+        if (!placed) groups.push([ag]);
+    }
+
+    for (const group of groups) {
+        // Atribui colunas dentro do grupo evitando sobreposição
+        const cols: Agendamento[][] = [];
+        for (const ag of group) {
+            const agStart = toMin(ag.hora_inicio);
+            let placed = false;
+            for (const col of cols) {
+                const lastEnd = Math.max(...col.map(c => toMin(c.hora_fim)));
+                if (agStart >= lastEnd) {
+                    col.push(ag);
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) cols.push([ag]);
+        }
+        const total = cols.length;
+        cols.forEach((col, colIdx) => {
+            col.forEach(ag => result.set(ag.id, { col: colIdx, total }));
+        });
+    }
+
+    return result;
+}
+
+function diaBloqueado(dateStr: string) {
+    const dow = new Date(dateStr + 'T12:00:00').getDay(); // 0=dom
+    return props.dias_ativos.length > 0 && !props.dias_ativos.includes(dow);
 }
 
 function navSemana(dir: number) {
     const d = new Date(props.semana_inicio + 'T00:00:00');
     d.setDate(d.getDate() + dir * 7);
-    router.get('/agenda', { semana: d.toISOString().split('T')[0], veterinario_id: filtroVet.value || undefined }, { preserveState: true });
+    router.get('/agenda', {
+        semana: d.toISOString().split('T')[0],
+        veterinario_id: filtroVet.value || undefined,
+        especialidade_id: filtroEsp.value || undefined
+    }, { preserveState: true });
 }
 
 const labelSemana = computed(() => {
@@ -73,19 +158,103 @@ const labelSemana = computed(() => {
     return `${d1} – ${fim.getDate()} de ${mesAno}`;
 });
 
-// ── Filtro por veterinário ────────────────────────────────────────────────────
+// ── Filtro por veterinário e especialidade ───────────────────────────────────
 const filtroVet = ref<number | ''>('');
+const filtroEsp = ref<number | ''>('');
 
 function agendamentosNoDia(data: string) {
     return props.agendamentos.filter(a =>
-        a.data === data && (filtroVet.value === '' || a.veterinario.id === filtroVet.value)
+        String(a.data).substring(0, 10) === data && (filtroVet.value === '' || a.veterinario.id === filtroVet.value)
     );
 }
 
 function aplicarFiltroVet(id: number | '') {
     filtroVet.value = id;
-    router.get('/agenda', { semana: props.semana_inicio, veterinario_id: id || undefined }, { preserveState: true });
+    router.get('/agenda', {
+        semana: props.semana_inicio,
+        veterinario_id: id || undefined,
+        especialidade_id: filtroEsp.value || undefined
+    }, { preserveState: true });
 }
+
+function aplicarFiltroEsp(id: number | '') {
+    filtroEsp.value = id;
+    filtroVet.value = ''; // Limpa filtro de veterinário ao filtrar por especialidade
+    router.get('/agenda', {
+        semana: props.semana_inicio,
+        especialidade_id: id || undefined
+    }, { preserveState: true });
+}
+
+// ── View mode (semana / dia) ──────────────────────────────────────────────────
+const viewMode = ref<'semana' | 'dia'>('semana');
+
+const diaAtual = ref(new Date().toISOString().split('T')[0]);
+
+const labelDia = computed(() => {
+    const d = new Date(diaAtual.value + 'T12:00:00');
+    return d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+});
+
+function navDia(dir: number) {
+    const d = new Date(diaAtual.value + 'T12:00:00');
+    d.setDate(d.getDate() + dir);
+    const nova = d.toISOString().split('T')[0];
+    diaAtual.value = nova;
+    // Se sair da semana carregada, navegar no servidor
+    const semanaFim = new Date(props.semana_inicio + 'T00:00:00');
+    semanaFim.setDate(semanaFim.getDate() + 6);
+    const semanaFimStr = semanaFim.toISOString().split('T')[0];
+    if (nova < props.semana_inicio || nova > semanaFimStr) {
+        router.get('/agenda', {
+            semana: nova,
+            veterinario_id: filtroVet.value || undefined,
+            especialidade_id: filtroEsp.value || undefined
+        }, {
+            preserveState: true,
+            onSuccess: () => { diaAtual.value = nova; },
+        });
+    }
+}
+
+// Paleta de cores por veterinário (índice → cor)
+const VET_CORES = [
+    '#6366f1', // indigo
+    '#ec4899', // pink
+    '#f59e0b', // amber
+    '#10b981', // emerald
+    '#3b82f6', // blue
+    '#8b5cf6', // violet
+    '#ef4444', // red
+    '#14b8a6', // teal
+];
+
+// Mistura uma cor hex com branco. mix=0 → branco puro, mix=1 → cor pura
+function blendWithWhite(hex: string, mix: number): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const nr = Math.round(255 + (r - 255) * mix);
+    const ng = Math.round(255 + (g - 255) * mix);
+    const nb = Math.round(255 + (b - 255) * mix);
+    return `rgb(${nr},${ng},${nb})`;
+}
+
+const vetCor = computed(() => {
+    const map: Record<number, string> = {};
+    props.veterinarios.forEach((v, i) => { map[v.id] = VET_CORES[i % VET_CORES.length]; });
+    return map;
+});
+
+function agendamentosNoDiaPorVet(vetId: number) {
+    return props.agendamentos.filter(a =>
+        String(a.data).substring(0, 10) === diaAtual.value && a.veterinario.id === vetId
+    );
+}
+
+const vetsComAgendamentosHoje = computed(() =>
+    props.veterinarios.filter(v => agendamentosNoDiaPorVet(v.id).length > 0 || filtroVet.value === v.id || filtroVet.value === '')
+);
 
 // ── Aba ───────────────────────────────────────────────────────────────────────
 const abaSelecionada = ref<'agenda' | 'relatorios'>('agenda');
@@ -150,12 +319,12 @@ function excluirAgendamento() {
 
 // ── Modal novo agendamento ────────────────────────────────────────────────────
 const showModal = ref(false);
-const agForm = ref({
+const agForm = useForm({
     cliente_id: '' as string | number,
     paciente_id: '' as string | number,
     veterinario_id: '',
     tipo_servico_id: '',
-    data: new Date().toISOString().split('T')[0],
+    agData: new Date().toISOString().split('T')[0],
     hora_inicio: '08:00',
     hora_fim: '08:30',
     observacoes_publicas: '',
@@ -167,10 +336,10 @@ const slotsLivres = ref<Array<{ hora_inicio: string; hora_fim: string }>>([]);
 const carregandoSlots = ref(false);
 
 async function carregarSlots() {
-    if (!agForm.value.veterinario_id || !agForm.value.data) { slotsLivres.value = []; return; }
+    if (!agForm.veterinario_id || !agForm.agData) { slotsLivres.value = []; return; }
     carregandoSlots.value = true;
     const csrf = (document.querySelector('meta[name=csrf-token]') as HTMLMetaElement)?.content ?? '';
-    const res = await fetch(`/agendamentos/disponibilidade?veterinario_id=${agForm.value.veterinario_id}&data=${agForm.value.data}`, {
+    const res = await fetch(`/agendamentos/disponibilidade?veterinario_id=${agForm.veterinario_id}&data=${agForm.agData}`, {
         headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrf },
     });
     slotsLivres.value = res.ok ? await res.json() : [];
@@ -178,73 +347,91 @@ async function carregarSlots() {
 }
 
 function selecionarSlot(slot: { hora_inicio: string; hora_fim: string }) {
-    agForm.value.hora_inicio = slot.hora_inicio;
-    agForm.value.hora_fim = slot.hora_fim;
+    agForm.hora_inicio = slot.hora_inicio;
+    agForm.hora_fim = slot.hora_fim;
 }
 
 function abrirModal() {
-    agForm.value = {
-        cliente_id: '', paciente_id: '', veterinario_id: '',
-        tipo_servico_id: '', data: new Date().toISOString().split('T')[0],
-        hora_inicio: '08:00', hora_fim: '08:30',
-        observacoes_publicas: '', urgencia: false,
-    };
+    agForm.reset();
+    agForm.agData = new Date().toISOString().split('T')[0];
+    tutorSelecionado.value = null;
+    petsDoTutor.value = [];
     pacienteSelecionado.value = null;
-    buscaPaciente.value = '';
-    resultadosPaciente.value = [];
+    buscaTutor.value = '';
+    resultadosTutor.value = [];
     slotsLivres.value = [];
     showModal.value = true;
 }
 
 function salvarAgendamento() {
-    router.post('/agendamentos', agForm.value, { onSuccess: () => { showModal.value = false; } });
+    agForm.transform(d => {
+        const { agData, ...rest } = d as any;
+        return { ...rest, data: agData };
+    }).post('/agendamentos', { onSuccess: () => { showModal.value = false; } });
 }
 
-// ── Autocomplete de paciente ──────────────────────────────────────────────────
-type PacienteResult = {
-    id: number; nome: string; especie: string; raca: string | null;
-    foto_url: string | null; cliente: { id: number; nome: string };
-};
+// ── Busca por tutor → selecionar pet ─────────────────────────────────────────
+type TutorResult = { id: number; nome: string; celular: string | null; email: string | null };
+type PetResult   = { id: number; nome: string; especie: string; raca: string | null };
 
-const buscaPaciente = ref('');
-const resultadosPaciente = ref<PacienteResult[]>([]);
-const pacienteSelecionado = ref<PacienteResult | null>(null);
-const buscandoPaciente = ref(false);
-const mostrarDropdown = ref(false);
+const buscaTutor = ref('');
+const resultadosTutor = ref<TutorResult[]>([]);
+const tutorSelecionado = ref<TutorResult | null>(null);
+const petsDoTutor = ref<PetResult[]>([]);
+const pacienteSelecionado = ref<PetResult | null>(null);
+const buscandoTutor = ref(false);
+const mostrarDropdownTutor = ref(false);
 let debounceTimer: ReturnType<typeof setTimeout>;
 
-async function onBuscaPaciente() {
+async function onBuscaTutor() {
     clearTimeout(debounceTimer);
+    tutorSelecionado.value = null;
+    petsDoTutor.value = [];
     pacienteSelecionado.value = null;
-    agForm.value.paciente_id = '';
-    agForm.value.cliente_id = '';
-    if (buscaPaciente.value.length < 2) { resultadosPaciente.value = []; mostrarDropdown.value = false; return; }
+    agForm.paciente_id = '';
+    agForm.cliente_id = '';
+    if (buscaTutor.value.length < 2) { resultadosTutor.value = []; mostrarDropdownTutor.value = false; return; }
     debounceTimer = setTimeout(async () => {
-        buscandoPaciente.value = true;
+        buscandoTutor.value = true;
         const csrf = (document.querySelector('meta[name=csrf-token]') as HTMLMetaElement)?.content ?? '';
-        const res = await fetch(`/pacientes/buscar?q=${encodeURIComponent(buscaPaciente.value)}`, {
+        const res = await fetch(`/clientes/buscar?q=${encodeURIComponent(buscaTutor.value)}`, {
             headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrf },
         });
-        resultadosPaciente.value = res.ok ? await res.json() : [];
-        mostrarDropdown.value = true;
-        buscandoPaciente.value = false;
+        resultadosTutor.value = res.ok ? await res.json() : [];
+        mostrarDropdownTutor.value = true;
+        buscandoTutor.value = false;
     }, 280);
 }
 
-function selecionarPaciente(p: PacienteResult) {
-    pacienteSelecionado.value = p;
-    agForm.value.paciente_id = p.id;
-    agForm.value.cliente_id = p.cliente.id;
-    buscaPaciente.value = p.nome;
-    mostrarDropdown.value = false;
-    resultadosPaciente.value = [];
+async function selecionarTutor(t: TutorResult) {
+    tutorSelecionado.value = t;
+    agForm.cliente_id = t.id;
+    buscaTutor.value = t.nome;
+    mostrarDropdownTutor.value = false;
+    resultadosTutor.value = [];
+    // Carrega pets do tutor
+    const csrf = (document.querySelector('meta[name=csrf-token]') as HTMLMetaElement)?.content ?? '';
+    const res = await fetch(`/clientes/${t.id}`, { headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrf } });
+    if (res.ok) {
+        const data = await res.json();
+        petsDoTutor.value = data.pacientes ?? [];
+        // Se tiver apenas 1 pet, seleciona automaticamente
+        if (petsDoTutor.value.length === 1) selecionarPet(petsDoTutor.value[0]);
+    }
 }
 
-function limparPaciente() {
+function selecionarPet(p: PetResult) {
+    pacienteSelecionado.value = p;
+    agForm.paciente_id = p.id;
+}
+
+function limparTutor() {
+    tutorSelecionado.value = null;
+    petsDoTutor.value = [];
     pacienteSelecionado.value = null;
-    agForm.value.paciente_id = '';
-    agForm.value.cliente_id = '';
-    buscaPaciente.value = '';
+    agForm.paciente_id = '';
+    agForm.cliente_id = '';
+    buscaTutor.value = '';
 }
 
 const especieIcon: Record<string, string> = { cão: '🐕', cao: '🐕', gato: '🐈', ave: '🐦', coelho: '🐇', hamster: '🐹', peixe: '🐟', canino: '🐕', felino: '🐈' };
@@ -267,6 +454,24 @@ const relatorios = computed(() => {
         };
     }).filter(r => r.total > 0);
 
+    // Relatório por especialidade
+    const porEspecialidade = props.especialidades.map(esp => {
+        // Encontra todos os vet que têm essa especialidade
+        const vetsComEsp = props.veterinarios.filter(v => v.especialidades.includes(esp.nome));
+        const vetsIds = vetsComEsp.map(v => v.id);
+
+        // Filtra agendamentos desses vets
+        const ags = props.agendamentos.filter(a => vetsIds.includes(a.veterinario.id));
+
+        return {
+            especialidade: esp,
+            total: ags.length,
+            finalizados: ags.filter(a => a.status === 'finalizado').length,
+            cancelados: ags.filter(a => a.status === 'cancelado').length,
+            veterinarios: vetsComEsp.length,
+        };
+    }).filter(r => r.total > 0);
+
     const porDia = diasSemana.value.map(d => ({
         label: d.label,
         num: d.num,
@@ -275,7 +480,7 @@ const relatorios = computed(() => {
 
     const maxDia = Math.max(...porDia.map(d => d.count), 1);
 
-    return { total, finalizados, cancelados, taxaComp, porVet, porDia, maxDia };
+    return { total, finalizados, cancelados, taxaComp, porVet, porEspecialidade, porDia, maxDia };
 });
 </script>
 
@@ -283,107 +488,265 @@ const relatorios = computed(() => {
     <div class="flex h-full flex-col overflow-hidden">
 
         <!-- Header -->
-        <div class="flex items-center justify-between border-b border-gray-100 bg-white px-8 py-4">
-            <h1 class="text-xl font-bold text-gray-900">Agenda</h1>
+        <div class="border-b border-gray-100 bg-white px-8">
+            <!-- Linha principal -->
+            <div class="flex items-center justify-between py-4">
+                <h1 class="text-xl font-bold text-gray-900">Agenda</h1>
 
-            <div class="flex items-center gap-3">
-                <!-- Tabs -->
-                <div class="flex gap-1">
-                    <button v-for="tab in ['agenda', 'relatorios']" :key="tab"
-                        @click="abaSelecionada = tab as any"
-                        class="px-3 py-1.5 text-sm capitalize transition"
-                        :class="abaSelecionada === tab ? 'border-b-2 border-primary-500 font-semibold text-primary-600' : 'text-gray-500 hover:text-gray-700'">
-                        {{ tab === 'agenda' ? 'Agenda' : 'Relatórios' }}
+                <div class="flex items-center gap-3">
+                    <!-- Tabs -->
+                    <div class="flex gap-1">
+                        <button v-for="tab in ['agenda', 'relatorios']" :key="tab"
+                            @click="abaSelecionada = tab as any"
+                            class="px-3 py-1.5 text-sm capitalize transition"
+                            :class="abaSelecionada === tab ? 'border-b-2 border-primary-500 font-semibold text-primary-600' : 'text-gray-500 hover:text-gray-700'">
+                            {{ tab === 'agenda' ? 'Agenda' : 'Relatórios' }}
+                        </button>
+                    </div>
+
+                    <!-- Toggle semana / dia -->
+                    <div v-if="abaSelecionada === 'agenda'" class="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
+                        <button @click="viewMode = 'semana'"
+                            class="px-3 py-1.5 transition"
+                            :class="viewMode === 'semana' ? 'bg-primary-500 text-white' : 'text-gray-500 hover:bg-gray-50'">
+                            Semana
+                        </button>
+                        <button @click="viewMode = 'dia'"
+                            class="px-3 py-1.5 border-l border-gray-200 transition"
+                            :class="viewMode === 'dia' ? 'bg-primary-500 text-white' : 'text-gray-500 hover:bg-gray-50'">
+                            Dia
+                        </button>
+                    </div>
+
+                    <!-- Navegação de semana -->
+                    <div v-if="abaSelecionada === 'agenda' && viewMode === 'semana'" class="flex items-center gap-2 text-sm text-gray-600">
+                        <button @click="navSemana(-1)" class="rounded p-1 hover:bg-gray-100">
+                            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+                        </button>
+                        <span class="font-medium text-xs">{{ labelSemana }}</span>
+                        <button @click="navSemana(1)" class="rounded p-1 hover:bg-gray-100">
+                            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+                        </button>
+                    </div>
+
+                    <!-- Navegação de dia -->
+                    <div v-if="abaSelecionada === 'agenda' && viewMode === 'dia'" class="flex items-center gap-2 text-sm text-gray-600">
+                        <button @click="navDia(-1)" class="rounded p-1 hover:bg-gray-100">
+                            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+                        </button>
+                        <span class="font-medium text-xs capitalize">{{ labelDia }}</span>
+                        <button @click="navDia(1)" class="rounded p-1 hover:bg-gray-100">
+                            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+                        </button>
+                    </div>
+
+                    <button @click="abrirModal" class="flex items-center gap-1.5 rounded-lg bg-primary-500 px-4 py-1.5 text-sm font-semibold text-white hover:bg-primary-600">
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Novo agendamento
                     </button>
                 </div>
+            </div>
 
-                <!-- Navegação de semana -->
-                <div class="flex items-center gap-2 text-sm text-gray-600">
-                    <button @click="navSemana(-1)" class="rounded p-1 hover:bg-gray-100">
-                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
-                    </button>
-                    <span class="font-medium text-xs">{{ labelSemana }}</span>
-                    <button @click="navSemana(1)" class="rounded p-1 hover:bg-gray-100">
-                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-                    </button>
-                </div>
+            <!-- Filtro por Especialidade (view semana) -->
+            <div v-if="abaSelecionada === 'agenda' && viewMode === 'semana' && especialidades.length > 0" class="flex items-center gap-2 pb-2 border-b border-gray-100 mb-2">
+                <span class="text-xs font-medium text-gray-600">Especialidade:</span>
+                <button @click="aplicarFiltroEsp('')"
+                    class="rounded-full px-3 py-1 text-xs font-medium transition"
+                    :class="filtroEsp === '' ? 'bg-primary-100 text-primary-700' : 'text-gray-500 hover:bg-gray-50'">
+                    Todas
+                </button>
+                <button v-for="esp in especialidades" :key="esp.id"
+                    @click="aplicarFiltroEsp(esp.id)"
+                    class="rounded-full px-3 py-1 text-xs font-medium transition"
+                    :class="filtroEsp === esp.id ? 'bg-primary-100 text-primary-700' : 'text-gray-500 hover:bg-gray-50'">
+                    {{ esp.nome }}
+                </button>
+            </div>
 
-                <!-- Filtro por veterinário -->
-                <div class="flex items-center gap-1">
-                    <button @click="aplicarFiltroVet('')"
-                        class="rounded-full px-3 py-1 text-xs font-medium transition"
-                        :class="filtroVet === '' ? 'bg-primary-500 text-white' : 'border border-gray-200 text-gray-500 hover:bg-gray-50'">
-                        Todos
-                    </button>
-                    <button v-for="v in veterinarios" :key="v.id"
-                        @click="aplicarFiltroVet(v.id)"
-                        class="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition"
-                        :class="filtroVet === v.id ? 'bg-primary-500 text-white' : 'border border-gray-200 text-gray-500 hover:bg-gray-50'">
-                        <span class="flex h-4 w-4 items-center justify-center rounded-full bg-primary-100 text-[9px] font-bold text-primary-700"
-                            :class="filtroVet === v.id ? 'bg-white/20! text-white!' : ''">
-                            {{ v.name.charAt(0) }}
-                        </span>
-                        {{ v.name.split(' ')[0] }}
-                    </button>
-                </div>
-
-                <button @click="abrirModal" class="flex items-center gap-1.5 rounded-lg bg-primary-500 px-4 py-1.5 text-sm font-semibold text-white hover:bg-primary-600">
-                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Novo agendamento
+            <!-- Filtro por Veterinário (view semana) -->
+            <div v-if="abaSelecionada === 'agenda' && viewMode === 'semana'" class="flex items-center gap-2 pb-3">
+                <span class="text-xs font-medium text-gray-600">Veterinário:</span>
+                <button @click="aplicarFiltroVet('')"
+                    class="rounded-full px-3 py-1 text-xs font-medium transition"
+                    :class="filtroVet === '' ? 'bg-primary-500 text-white' : 'border border-gray-200 text-gray-500 hover:bg-gray-50'">
+                    Todos
+                </button>
+                <button v-for="v in veterinarios" :key="v.id"
+                    @click="aplicarFiltroVet(v.id)"
+                    class="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition"
+                    :class="filtroVet === v.id ? 'bg-primary-500 text-white' : 'border border-gray-200 text-gray-500 hover:bg-gray-50'">
+                    <span class="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                        :style="{ backgroundColor: vetCor[v.id] }">
+                        {{ v.name.charAt(0) }}
+                    </span>
+                    {{ v.name.split(' ')[0] }}
                 </button>
             </div>
         </div>
 
-        <!-- ABA: Agenda -->
-        <div v-if="abaSelecionada === 'agenda'" class="flex flex-1 overflow-hidden bg-white">
-            <!-- Coluna de horas -->
-            <div class="w-16 shrink-0 border-r border-gray-100">
-                <div class="h-14 border-b border-gray-100"></div>
-                <div class="relative">
-                    <div v-for="hora in horas" :key="hora" class="flex h-16 items-start justify-end pr-2 pt-1">
-                        <span class="text-[11px] text-gray-400">{{ hora }}</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Grid dos dias -->
-            <div class="flex flex-1 overflow-x-auto overflow-y-auto">
-                <div v-for="dia in diasSemana" :key="dia.date"
-                    class="flex min-w-0 flex-1 flex-col border-r border-gray-100 last:border-r-0">
-                    <div class="sticky top-0 z-10 flex h-14 flex-col items-center justify-center border-b border-gray-100 bg-white">
+        <!-- ABA: Agenda — view semana -->
+        <div v-if="abaSelecionada === 'agenda' && viewMode === 'semana'" class="flex flex-1 flex-col overflow-hidden bg-white">
+            <!-- Header fixo: canto + nomes dos dias -->
+            <div class="flex shrink-0 border-b border-gray-100">
+                <div class="w-16 shrink-0 border-r border-gray-100"></div>
+                <div class="flex flex-1 overflow-x-hidden">
+                    <div v-for="dia in diasSemana" :key="dia.date"
+                        class="flex min-w-0 flex-1 flex-col items-center justify-center py-2 border-r border-gray-100 last:border-r-0">
                         <span class="text-[11px] uppercase text-gray-400">{{ dia.label }}</span>
                         <span class="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold"
                             :class="dia.isToday ? 'bg-primary-500 text-white' : 'text-gray-700'">
                             {{ dia.num }}
                         </span>
                     </div>
+                </div>
+            </div>
 
-                    <div class="relative flex-1">
-                        <div v-for="hora in horas" :key="hora" class="h-16 border-b border-gray-50"></div>
+            <!-- Body rolável: horas + eventos juntos -->
+            <div class="relative flex flex-1 overflow-y-auto overflow-x-auto">
+                <!-- Linha do horário atual — cobre coluna de horas + grid -->
+                <div class="pointer-events-none absolute left-0 right-0 z-30 flex items-center" :style="{ top: horaAtualTop + 'px' }">
+                    <span class="shrink-0 rounded-r bg-red-500 px-1 py-0.5 text-[9px] font-bold text-white">{{ horaAtualLabel }}</span>
+                    <div class="h-px flex-1 bg-red-400"></div>
+                </div>
 
-                        <!-- Linha do horário atual -->
-                        <div v-if="dia.isToday" class="absolute left-0 right-0 z-10 flex items-center" :style="{ top: horaAtualTop + 'px' }">
-                            <span class="shrink-0 rounded-r bg-red-500 px-1 py-0.5 text-[9px] font-bold text-white">{{ horaAtualLabel }}</span>
-                            <div class="h-px flex-1 bg-red-400"></div>
+                <!-- Coluna de horas (rola junto) -->
+                <div class="w-16 shrink-0 border-r border-gray-100">
+                    <div v-for="hora in horas" :key="hora" class="flex h-24 items-start justify-end pr-2 pt-1">
+                        <span class="text-[11px] text-gray-400">{{ hora }}</span>
+                    </div>
+                </div>
+
+                <!-- Grid dos dias -->
+                <div class="relative flex flex-1">
+
+                    <div v-for="dia in diasSemana" :key="dia.date"
+                        class="relative min-w-0 flex-1 border-r border-gray-100 last:border-r-0">
+                        <!-- Fundo com linhas diagonais para dias sem funcionamento -->
+                        <div v-if="diaBloqueado(dia.date)"
+                            class="absolute inset-0 z-0 pointer-events-none"
+                            style="background: repeating-linear-gradient(135deg, transparent, transparent 8px, rgba(0,0,0,0.035) 8px, rgba(0,0,0,0.035) 10px);">
                         </div>
 
+                        <div v-for="hora in horas" :key="hora" class="h-24 border-b border-gray-50"></div>
+
                         <!-- Agendamentos -->
+                        <template v-if="agendamentosNoDia(dia.date).length">
                         <div v-for="ag in agendamentosNoDia(dia.date)" :key="ag.id"
                             @click="abrirDetalhes(ag)"
-                            class="absolute left-1 right-1 z-20 cursor-pointer overflow-hidden rounded-md px-2 py-1 text-xs shadow-sm transition hover:shadow-md hover:brightness-95"
-                            :class="ag.urgencia ? 'ring-2 ring-red-400 ring-offset-0' : ''"
+                            :title="ag.status === 'finalizado' ? 'Consulta finalizada' : ''"
+                            class="absolute z-20 cursor-pointer overflow-hidden rounded-md pl-3 pr-2 py-1.5 text-xs transition hover:brightness-95"
+                            :class="ag.status === 'finalizado' ? 'opacity-40' : ''"
+                            :style="styleCardSemana(ag, agendamentosNoDia(dia.date))">
+                            <div class="flex items-start justify-between gap-1">
+                                <p class="truncate font-bold text-gray-800 leading-tight text-xs">{{ ag.cliente?.nome }}</p>
+                                <svg v-if="ag.urgencia" class="h-3 w-3 shrink-0 text-red-500" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                            </div>
+                            <p class="truncate text-gray-600 text-[11px] leading-tight">{{ getEspecieIcon(ag.paciente.especie) }} {{ ag.paciente?.nome }}</p>
+                            <p class="truncate text-[10px] font-semibold leading-tight" :style="{ color: vetCor[ag.veterinario.id] }">{{ ag.hora_inicio.substring(0,5) }} – {{ ag.hora_fim.substring(0,5) }}</p>
+                            <!-- Pill do tipo de serviço -->
+                            <span v-if="ag.tipo_servico"
+                                class="mt-1 inline-block rounded px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white"
+                                :style="{ backgroundColor: vetCor[ag.veterinario.id] }">
+                                {{ ag.tipo_servico.nome }}
+                            </span>
+                        </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ABA: Agenda — view dia -->
+        <div v-else-if="abaSelecionada === 'agenda' && viewMode === 'dia'" class="flex flex-1 flex-col overflow-hidden bg-white">
+            <!-- Avatars dos vets no topo -->
+            <div class="flex shrink-0 items-center gap-3 border-b border-gray-100 px-4 py-3">
+                <div v-for="v in props.veterinarios" :key="v.id"
+                    class="flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold"
+                    :style="{ borderColor: vetCor[v.id], color: vetCor[v.id], backgroundColor: vetCor[v.id] + '18' }">
+                    <span class="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                        :style="{ backgroundColor: vetCor[v.id] }">
+                        {{ v.name.charAt(0) }}
+                    </span>
+                    {{ v.name.split(' ')[0] }}
+                    <span class="ml-0.5 rounded-full px-1.5 text-[10px]"
+                        :style="{ backgroundColor: vetCor[v.id], color: '#fff' }">
+                        {{ agendamentosNoDiaPorVet(v.id).length }}
+                    </span>
+                </div>
+            </div>
+
+            <!-- Header: hora + colunas por vet -->
+            <div class="flex shrink-0 border-b border-gray-100">
+                <div class="w-16 shrink-0 border-r border-gray-100"></div>
+                <div class="flex flex-1 overflow-x-hidden">
+                    <div v-for="v in vetsComAgendamentosHoje" :key="v.id"
+                        class="flex min-w-0 flex-1 items-center justify-center gap-2 py-2.5 border-r border-gray-100 last:border-r-0">
+                        <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                            :style="{ backgroundColor: vetCor[v.id] }">
+                            {{ v.name.charAt(0) }}
+                        </span>
+                        <span class="text-xs font-semibold text-gray-700">{{ v.name.split(' ')[0] }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Body rolável -->
+            <div class="flex flex-1 overflow-y-auto overflow-x-auto">
+                <!-- Coluna de horas -->
+                <div class="w-16 shrink-0 border-r border-gray-100">
+                    <div v-for="hora in horas" :key="hora" class="flex h-24 items-start justify-end pr-2 pt-1">
+                        <span class="text-[11px] text-gray-400">{{ hora }}</span>
+                    </div>
+                </div>
+
+                <!-- Colunas por vet -->
+                <div class="flex flex-1">
+                    <div v-for="v in vetsComAgendamentosHoje" :key="v.id"
+                        class="relative min-w-0 flex-1 border-r border-gray-100 last:border-r-0">
+                        <!-- Grid de horas -->
+                        <div v-for="hora in horas" :key="hora" class="h-24 border-b border-gray-50"></div>
+
+                        <!-- Linha do horário atual (hoje) -->
+                        <div v-if="diaAtual === new Date().toISOString().split('T')[0]"
+                            class="absolute left-0 right-0 z-10 flex items-center"
+                            :style="{ top: horaAtualTop + 'px' }">
+                            <div class="h-px flex-1 bg-red-400"></div>
+                            <span class="shrink-0 rounded-l bg-red-500 px-1 py-0.5 text-[9px] font-bold text-white">{{ horaAtualLabel }}</span>
+                        </div>
+
+                        <!-- Cards de agendamento -->
+                        <div v-for="ag in agendamentosNoDiaPorVet(v.id)" :key="ag.id"
+                            @click="abrirDetalhes(ag)"
+                            :title="ag.status === 'finalizado' ? 'Consulta finalizada' : ''"
+                            class="absolute left-1 right-1 z-20 cursor-pointer overflow-hidden rounded-lg pl-3 pr-2.5 py-2 transition hover:brightness-95"
+                            :class="ag.status === 'finalizado' ? 'opacity-40' : ''"
                             :style="{
                                 top: agendamentoPosicao(ag).top + 'px',
                                 height: agendamentoPosicao(ag).height + 'px',
-                                backgroundColor: ag.tipo_servico?.cor ?? '#00c1b3',
+                                backgroundColor: blendWithWhite(vetCor[v.id], 0.12),
+                                border: '1px solid ' + blendWithWhite(vetCor[v.id], 0.4),
+                                borderLeft: '4px solid ' + vetCor[v.id],
                             }">
+                            <!-- Nome do cliente -->
                             <div class="flex items-start justify-between gap-1">
-                                <p class="truncate font-semibold text-white leading-tight">{{ ag.paciente?.nome }}</p>
-                                <!-- Urgência -->
-                                <svg v-if="ag.urgencia" class="h-3 w-3 shrink-0 text-red-200" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                                <p class="truncate font-bold text-gray-800 leading-tight text-xs">{{ ag.cliente.nome }}</p>
                             </div>
-                            <p class="truncate text-white/80">{{ ag.tipo_servico?.nome ?? 'Consulta' }}</p>
-                            <p class="text-white/70">{{ ag.hora_inicio.substring(0,5) }} – {{ ag.hora_fim.substring(0,5) }}</p>
+                            <!-- Nome do pet + espécie -->
+                            <p class="truncate text-gray-600 text-[11px] leading-tight mt-0.5">
+                                {{ getEspecieIcon(ag.paciente.especie) }} {{ ag.paciente.nome }}
+                            </p>
+                            <!-- Hora -->
+                            <p class="text-[10px] font-semibold leading-tight mt-0.5" :style="{ color: vetCor[v.id] }">
+                                {{ ag.hora_inicio.substring(0,5) }} – {{ ag.hora_fim.substring(0,5) }}
+                            </p>
+                            <!-- Tipo de serviço -->
+                            <span v-if="ag.tipo_servico"
+                                class="mt-1 inline-block rounded px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white"
+                                :style="{ backgroundColor: vetCor[v.id] }">
+                                {{ ag.tipo_servico.nome }}
+                            </span>
+                            <!-- Urgência -->
+                            <svg v-if="ag.urgencia" class="absolute right-1.5 top-1.5 h-3 w-3 text-red-500" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
                         </div>
                     </div>
                 </div>
@@ -451,6 +814,32 @@ const relatorios = computed(() => {
                         </div>
                     </div>
                     <p v-else class="text-xs text-gray-400">Nenhum agendamento nesta semana.</p>
+                </div>
+
+                <!-- Por especialidade -->
+                <div v-if="relatorios.porEspecialidade.length > 0" class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
+                    <h3 class="mb-4 text-sm font-semibold text-gray-700">Por especialidade</h3>
+                    <div class="space-y-3">
+                        <div v-for="r in relatorios.porEspecialidade" :key="r.especialidade.id" class="flex items-center gap-4">
+                            <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-700">
+                                {{ r.especialidade.nome.charAt(0) }}
+                            </div>
+                            <div class="flex-1">
+                                <div class="flex items-center justify-between mb-1">
+                                    <div>
+                                        <span class="text-sm font-medium text-gray-800">{{ r.especialidade.nome }}</span>
+                                        <span class="ml-2 text-xs text-gray-400">({{ r.veterinarios }} vet{{ r.veterinarios > 1 ? 's' : '' }})</span>
+                                    </div>
+                                    <span class="text-xs text-gray-400">{{ r.finalizados }}/{{ r.total }} realizados</span>
+                                </div>
+                                <div class="h-1.5 w-full rounded-full bg-gray-100">
+                                    <div class="h-1.5 rounded-full bg-blue-400 transition-all"
+                                        :style="{ width: r.total ? `${(r.finalizados / r.total) * 100}%` : '0%' }">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -545,7 +934,7 @@ const relatorios = computed(() => {
                 <!-- Observações -->
                 <div v-if="agSelecionado.observacoes_publicas">
                     <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-gray-400">Observações</p>
-                    <p class="rounded-lg bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{{ agSelecionado.observacoes_publicas }}</p>
+                    <div class="rounded-lg bg-gray-50 px-3 py-2.5 text-sm text-gray-700 prose prose-sm max-w-none" v-html="agSelecionado.observacoes_publicas"></div>
                 </div>
             </div>
 
@@ -554,7 +943,9 @@ const relatorios = computed(() => {
                 <button @click="excluirAgendamento" class="text-xs text-red-400 hover:text-red-500">Excluir</button>
                 <div class="flex gap-2">
                     <Link v-if="['em_atendimento','finalizado'].includes(agSelecionado.status)"
-                        :href="`/prontuarios/paciente/${agSelecionado.paciente.id}`"
+                        :href="agSelecionado.status === 'em_atendimento'
+                            ? `/prontuarios/paciente/${agSelecionado.paciente.id}?agendamento_id=${agSelecionado.id}`
+                            : `/prontuarios/paciente/${agSelecionado.paciente.id}`"
                         class="rounded-lg bg-primary-500 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-600">
                         Abrir prontuário
                     </Link>
@@ -578,40 +969,60 @@ const relatorios = computed(() => {
             </div>
             <div class="space-y-3">
 
-                <!-- Busca de paciente -->
+                <!-- Busca tutor → selecionar pet -->
                 <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600">Paciente *</label>
-                    <div v-if="pacienteSelecionado"
+                    <label class="mb-1 block text-xs font-medium text-gray-600">Tutor (cliente) *</label>
+                    <div v-if="tutorSelecionado"
                         class="flex items-center justify-between rounded-lg border border-primary-300 bg-primary-50 px-3 py-2">
-                        <div class="flex items-center gap-2">
-                            <span class="text-lg">{{ getEspecieIcon(pacienteSelecionado.especie) }}</span>
-                            <div class="leading-tight">
-                                <p class="text-sm font-semibold text-primary-800">{{ pacienteSelecionado.nome }}</p>
-                                <p class="text-[11px] text-primary-500">{{ pacienteSelecionado.especie }}{{ pacienteSelecionado.raca ? ' · ' + pacienteSelecionado.raca : '' }} · {{ pacienteSelecionado.cliente.nome }}</p>
-                            </div>
+                        <div class="leading-tight">
+                            <p class="text-sm font-semibold text-primary-800">{{ tutorSelecionado.nome }}</p>
+                            <p v-if="tutorSelecionado.celular" class="text-[11px] text-primary-500">{{ tutorSelecionado.celular }}</p>
                         </div>
-                        <button @click="limparPaciente" class="text-primary-400 hover:text-red-500 text-lg leading-none">×</button>
+                        <button @click="limparTutor" class="text-primary-400 hover:text-red-500 text-lg leading-none">×</button>
                     </div>
                     <div v-else class="relative">
-                        <input v-model="buscaPaciente" @input="onBuscaPaciente"
-                            @focus="mostrarDropdown = resultadosPaciente.length > 0"
-                            @blur="setTimeout(() => mostrarDropdown = false, 180)"
-                            type="text" placeholder="Buscar por nome ou microchip..."
+                        <input v-model="buscaTutor" @input="onBuscaTutor"
+                            @focus="mostrarDropdownTutor = resultadosTutor.length > 0"
+                            @blur="window.setTimeout(() => mostrarDropdownTutor = false, 180)"
+                            type="text" placeholder="Buscar tutor por nome, CPF ou celular..."
                             class="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary-500" />
-                        <svg v-if="!buscandoPaciente" class="absolute left-3 top-2.5 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <svg v-if="!buscandoTutor" class="absolute left-3 top-2.5 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                         <svg v-else class="absolute left-3 top-2.5 h-4 w-4 animate-spin text-primary-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
-                        <div v-if="mostrarDropdown && resultadosPaciente.length"
+                        <div v-if="mostrarDropdownTutor && resultadosTutor.length"
                             class="absolute z-50 mt-1 w-full rounded-xl border border-gray-100 bg-white shadow-lg overflow-hidden">
-                            <button v-for="p in resultadosPaciente" :key="p.id"
-                                @mousedown.prevent="selecionarPaciente(p)"
+                            <button v-for="t in resultadosTutor" :key="t.id"
+                                @mousedown.prevent="selecionarTutor(t)"
                                 class="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-gray-50 border-b border-gray-50 last:border-b-0">
-                                <span class="text-base">{{ getEspecieIcon(p.especie) }}</span>
+                                <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-bold text-gray-600">
+                                    {{ t.nome.charAt(0) }}
+                                </div>
                                 <div class="min-w-0 flex-1 leading-tight">
-                                    <p class="font-medium text-gray-800 truncate">{{ p.nome }}</p>
-                                    <p class="text-[11px] text-gray-400 truncate">{{ p.especie }}{{ p.raca ? ' · ' + p.raca : '' }} · {{ p.cliente.nome }}</p>
+                                    <p class="font-medium text-gray-800 truncate">{{ t.nome }}</p>
+                                    <p v-if="t.celular" class="text-[11px] text-gray-400">{{ t.celular }}</p>
                                 </div>
                             </button>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Seleção do pet (aparece após selecionar tutor) -->
+                <div v-if="tutorSelecionado">
+                    <label class="mb-1 block text-xs font-medium text-gray-600">Animal *</label>
+                    <div v-if="!petsDoTutor.length" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                        Este tutor não possui animais cadastrados.
+                    </div>
+                    <div v-else class="flex flex-wrap gap-2">
+                        <button v-for="p in petsDoTutor" :key="p.id"
+                            @click="selecionarPet(p)"
+                            type="button"
+                            class="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition"
+                            :class="pacienteSelecionado?.id === p.id
+                                ? 'border-primary-400 bg-primary-50 text-primary-700'
+                                : 'border-gray-200 text-gray-600 hover:border-primary-300 hover:bg-gray-50'">
+                            <span>{{ getEspecieIcon(p.especie) }}</span>
+                            {{ p.nome }}
+                            <span v-if="p.raca" class="text-gray-400">· {{ p.raca }}</span>
+                        </button>
                     </div>
                 </div>
 
@@ -622,8 +1033,20 @@ const relatorios = computed(() => {
                         <select v-model="agForm.veterinario_id" @change="carregarSlots"
                             class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500">
                             <option value="">Selecionar...</option>
-                            <option v-for="v in veterinarios" :key="v.id" :value="String(v.id)">{{ v.name }}</option>
+                            <option v-for="v in veterinarios" :key="v.id" :value="String(v.id)">
+                                {{ v.name }}{{ v.especialidades.length > 0 ? ` (${v.especialidades.join(', ')})` : '' }}
+                            </option>
                         </select>
+                        <!-- Badge de especialidades do veterinário selecionado -->
+                        <div v-if="agForm.veterinario_id" class="mt-1 flex flex-wrap gap-1">
+                            <span
+                                v-for="esp in veterinarios.find(v => v.id === parseInt(agForm.veterinario_id))?.especialidades"
+                                :key="esp"
+                                class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700"
+                            >
+                                {{ esp }}
+                            </span>
+                        </div>
                     </div>
                     <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600">Tipo de serviço</label>
@@ -638,12 +1061,12 @@ const relatorios = computed(() => {
                 <!-- Data -->
                 <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600">Data *</label>
-                    <input v-model="agForm.data" @change="carregarSlots" type="date"
+                    <input v-model="agForm.agData" @change="carregarSlots" type="date"
                         class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500" />
                 </div>
 
                 <!-- Slots livres -->
-                <div v-if="agForm.veterinario_id && agForm.data">
+                <div v-if="agForm.veterinario_id && agForm.agData">
                     <label class="mb-1 block text-xs font-medium text-gray-600">
                         Horários disponíveis
                         <span v-if="carregandoSlots" class="text-gray-400">(carregando...)</span>
@@ -683,17 +1106,21 @@ const relatorios = computed(() => {
 
                 <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600">Observações</label>
-                    <textarea v-model="agForm.observacoes_publicas" rows="2"
-                        class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 resize-none"></textarea>
+                    <RichText v-model="agForm.observacoes_publicas" min-height="60px" />
                 </div>
             </div>
 
-            <div class="mt-5 flex justify-end gap-2">
+            <!-- Erros de validação do backend -->
+            <div v-if="Object.keys(agForm.errors).length" class="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                <p v-for="(msg, field) in agForm.errors" :key="field" class="text-xs text-red-600">{{ msg }}</p>
+            </div>
+
+            <div class="mt-4 flex justify-end gap-2">
                 <button @click="showModal = false" class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Cancelar</button>
                 <button @click="salvarAgendamento"
-                    :disabled="!agForm.paciente_id || !agForm.veterinario_id"
+                    :disabled="agForm.processing || !agForm.paciente_id || !agForm.veterinario_id || !agForm.cliente_id"
                     class="rounded-lg bg-primary-500 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed">
-                    Agendar
+                    {{ agForm.processing ? 'Salvando...' : 'Agendar' }}
                 </button>
             </div>
         </div>

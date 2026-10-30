@@ -13,9 +13,11 @@ class Produto extends Model
     use BelongsToClinica, SoftDeletes;
 
     protected $fillable = [
-        'clinica_id', 'categoria_id', 'fornecedor_id', 'nome', 'codigo_barras',
+        'clinica_id', 'categoria_id', 'fornecedor_id', 'nome', 'tipo', 'codigo_barras',
         'unidade_medida', 'quantidade_estoque', 'estoque_minimo',
         'preco_custo', 'preco_venda', 'ativo',
+        'forma_farmaceutica', 'dosagem_padrao', 'via_administracao_padrao',
+        'frequencia_padrao', 'duracao_padrao', 'controlado',
     ];
 
     protected $casts = [
@@ -24,6 +26,7 @@ class Produto extends Model
         'preco_custo' => 'decimal:2',
         'preco_venda' => 'decimal:2',
         'ativo' => 'boolean',
+        'controlado' => 'boolean',
     ];
 
     public function clinica(): BelongsTo

@@ -13,7 +13,7 @@ class CategoriaProduto extends Model
 
     protected $table = 'categorias_produto';
 
-    protected $fillable = ['clinica_id', 'nome', 'descricao', 'ativo'];
+    protected $fillable = ['clinica_id', 'nome', 'tipo', 'descricao', 'ativo'];
 
     protected $casts = ['ativo' => 'boolean'];
 

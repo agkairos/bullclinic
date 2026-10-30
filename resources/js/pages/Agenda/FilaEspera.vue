@@ -91,7 +91,7 @@ function especieIcon(e: string) {
                         </span>
                         <span class="text-xs text-gray-400">{{ ag.hora_inicio }} · {{ ag.veterinario.name }}</span>
                     </div>
-                    <p v-if="ag.observacoes_publicas" class="mt-0.5 text-xs text-gray-500">{{ ag.observacoes_publicas }}</p>
+                    <div v-if="ag.observacoes_publicas" class="mt-0.5 text-xs text-gray-600 prose prose-sm max-w-none" v-html="ag.observacoes_publicas"></div>
                 </div>
 
                 <!-- Tempo de espera -->

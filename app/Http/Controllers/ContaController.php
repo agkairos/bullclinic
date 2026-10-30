@@ -7,7 +7,9 @@ use App\Models\Role;
 use App\Models\UserClinica;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rules\Password;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -128,5 +130,45 @@ class ContaController extends Controller
         if ($clinica->conta_id !== $user->conta_ativa_id) {
             abort(403, 'Esta unidade não pertence à sua conta.');
         }
+    }
+
+    public function perfil(Request $request): Response
+    {
+        return Inertia::render('Conta/Perfil', [
+            'user' => $request->user()->only('id', 'name', 'email', 'telefone', 'cargo'),
+        ]);
+    }
+
+    public function atualizarPerfil(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+
+        $rules = [
+            'name'     => ['required', 'string', 'max:255'],
+            'telefone' => ['nullable', 'string', 'max:20'],
+            'cargo'    => ['nullable', 'string', 'max:100'],
+        ];
+
+        // Apenas valida senha se foi informada
+        if ($request->filled('current_password') || $request->filled('password')) {
+            $rules['current_password'] = ['required', 'current_password'];
+            $rules['password'] = ['required', 'confirmed', Password::defaults()];
+        }
+
+        $validated = $request->validate($rules);
+
+        // Atualiza dados básicos
+        $user->update([
+            'name'     => $validated['name'],
+            'telefone' => $validated['telefone'] ?? null,
+            'cargo'    => $validated['cargo'] ?? null,
+        ]);
+
+        // Atualiza senha se foi fornecida
+        if ($request->filled('password')) {
+            $user->update(['password' => Hash::make($validated['password'])]);
+        }
+
+        return back()->with('success', 'Perfil atualizado com sucesso.');
     }
 }

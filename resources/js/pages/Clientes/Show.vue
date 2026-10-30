@@ -91,7 +91,7 @@ function especieIcon(e: string) {
                         </div>
                         <div v-if="cliente.observacoes" class="col-span-2">
                             <p class="text-xs text-gray-400">Observações</p>
-                            <p class="text-gray-600">{{ cliente.observacoes }}</p>
+                            <div class="text-gray-600 prose prose-sm max-w-none" v-html="cliente.observacoes"></div>
                         </div>
                     </div>
                 </div>

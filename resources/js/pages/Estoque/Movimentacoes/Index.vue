@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { router } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { ref, computed, reactive } from 'vue';
 import AppLayout from '@/layouts/AppLayout.vue';
+import RichText from '@/components/RichText.vue';
 
 defineOptions({ layout: AppLayout });
 
@@ -17,15 +18,53 @@ const props = defineProps<{
             tipoMovimentacao: { id: number; nome: string; tipo_base: 'entrada' | 'saida' | 'ajuste' };
             usuario: { id: number; name: string };
         }>;
-        total: number;
+        links: any[];
     };
     tipos_movimentacao: Array<{ id: number; nome: string; tipo_base: string }>;
     produtos: Array<{ id: number; nome: string; unidade_medida: string }>;
+    filters: {
+        produto_id?: number;
+        tipo_movimentacao_id?: number;
+        data_inicio?: string;
+        data_fim?: string;
+    };
 }>();
 
 const showDrawer = ref(false);
-const filtroTipo = ref<string>('');
 const produtoBusca = ref('');
+
+// Filtros reativos
+const filters = reactive({
+    produto_id: props.filters.produto_id ?? '',
+    tipo_movimentacao_id: props.filters.tipo_movimentacao_id ?? '',
+    data_inicio: props.filters.data_inicio ?? '',
+    data_fim: props.filters.data_fim ?? '',
+});
+
+const hasFilters = computed(() =>
+    filters.produto_id || filters.tipo_movimentacao_id || filters.data_inicio || filters.data_fim
+);
+
+function aplicarFiltros() {
+    router.get('/estoque/movimentacoes', {
+        produto_id: filters.produto_id || undefined,
+        tipo_movimentacao_id: filters.tipo_movimentacao_id || undefined,
+        data_inicio: filters.data_inicio || undefined,
+        data_fim: filters.data_fim || undefined,
+    }, { preserveState: true });
+}
+
+function limparFiltros() {
+    filters.produto_id = '';
+    filters.tipo_movimentacao_id = '';
+    filters.data_inicio = '';
+    filters.data_fim = '';
+    aplicarFiltros();
+}
+
+function pageLabel(label: string): string {
+    return label.replace(/&laquo;/g, '«').replace(/&raquo;/g, '»');
+}
 
 // Form de nova movimentação
 const movForm = ref({
@@ -142,28 +181,43 @@ function selecionarTipo() {
 
         <!-- Filtros -->
         <div class="mb-5 flex items-center gap-3">
-            <div class="relative flex-1">
-                <input
-                    v-model="produtoBusca"
-                    type="text"
-                    placeholder="Buscar produto..."
-                    class="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
-                />
-                <svg class="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                </svg>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600">Produto</label>
+                <select v-model="filters.produto_id"
+                    class="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20">
+                    <option value="">Todos os produtos</option>
+                    <option v-for="p in produtos" :key="p.id" :value="p.id">{{ p.nome }}</option>
+                </select>
             </div>
-            <select v-model="filtroTipo" class="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20">
-                <option value="">Todos os tipos</option>
-                <option v-for="t in tipos_movimentacao" :key="t.id" :value="t.id">{{ t.nome }}</option>
-            </select>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600">Tipo</label>
+                <select v-model="filters.tipo_movimentacao_id"
+                    class="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20">
+                    <option value="">Todos os tipos</option>
+                    <option v-for="t in tipos_movimentacao" :key="t.id" :value="t.id">{{ t.nome }}</option>
+                </select>
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600">Data início</label>
+                <input v-model="filters.data_inicio" type="date"
+                    class="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20" />
+            </div>
+            <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600">Data fim</label>
+                <input v-model="filters.data_fim" type="date"
+                    class="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20" />
+            </div>
+            <div class="flex items-end gap-2">
+                <button @click="aplicarFiltros"
+                    class="rounded-lg bg-primary-500 px-4 py-2 text-sm text-white hover:bg-primary-600">
+                    Filtrar
+                </button>
+                <button v-if="hasFilters" @click="limparFiltros"
+                    class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">
+                    Limpar
+                </button>
+            </div>
         </div>
-
-        <!-- Total -->
-        <p class="mb-4 text-sm text-gray-500">
-            <span class="font-semibold text-gray-900">{{ movimentacoes.total }}</span>
-            {{ movimentacoes.total === 1 ? 'movimentação encontrada' : 'movimentações encontradas' }}
-        </p>
 
         <!-- Lista de Movimentações -->
         <div class="space-y-2.5">
@@ -180,28 +234,43 @@ function selecionarTipo() {
                 class="flex items-center justify-between rounded-lg border border-gray-100 bg-white px-5 py-4 shadow-sm transition hover:shadow-md"
             >
                 <div class="flex items-center gap-4">
-                    <div class="flex h-10 w-10 items-center justify-center rounded-full text-lg font-semibold" :class="tipoIcon(mov.tipoMovimentacao.tipo_base).class">
+                    <div v-if="mov.tipoMovimentacao" class="flex h-10 w-10 items-center justify-center rounded-full text-lg font-semibold" :class="tipoIcon(mov.tipoMovimentacao.tipo_base).class">
                         {{ tipoIcon(mov.tipoMovimentacao.tipo_base).icon }}
+                    </div>
+                    <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-lg" v-else>
+                        📦
                     </div>
                     <div>
                         <p class="font-semibold text-gray-900">{{ mov.produto.nome }}</p>
                         <div class="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
-                            <span class="rounded bg-gray-100 px-1.5 py-0.5 font-medium">{{ mov.tipoMovimentacao.nome }}</span>
+                            <span class="rounded bg-gray-100 px-1.5 py-0.5 font-medium">{{ mov.tipoMovimentacao?.nome ?? 'Movimentação' }}</span>
                             <span>•</span>
                             <span>{{ mov.usuario.name }}</span>
                             <span>•</span>
                             <span>{{ formatData(mov.movimentado_em) }}</span>
                         </div>
-                        <p v-if="mov.observacoes" class="mt-1 text-sm text-gray-600">{{ mov.observacoes }}</p>
+                        <div v-if="mov.observacoes" class="mt-1 text-sm text-gray-600 prose prose-sm max-w-none" v-html="mov.observacoes"></div>
                     </div>
                 </div>
                 <div class="text-right">
-                    <p class="text-lg font-bold" :class="mov.tipoMovimentacao.tipo_base === 'entrada' ? 'text-green-600' : mov.tipoMovimentacao.tipo_base === 'saida' ? 'text-red-600' : 'text-blue-600'">
-                        {{ mov.tipoMovimentacao.tipo_base === 'saida' ? '-' : '+' }}{{ mov.quantidade }} {{ mov.produto.unidade_medida }}
+                    <p class="text-lg font-bold" :class="mov.tipoMovimentacao?.tipo_base === 'entrada' ? 'text-green-600' : mov.tipoMovimentacao?.tipo_base === 'saida' ? 'text-red-600' : 'text-blue-600'">
+                        {{ mov.tipoMovimentacao?.tipo_base === 'saida' ? '-' : '+' }}{{ mov.quantidade }} {{ mov.produto.unidade_medida }}
                     </p>
                     <p v-if="valorTotal(mov)" class="mt-0.5 text-sm text-gray-500">{{ valorTotal(mov) }}</p>
                 </div>
             </div>
+        </div>
+
+        <!-- Paginação -->
+        <div v-if="movimentacoes.links?.length > 3" class="mt-4 flex justify-center gap-1">
+            <template v-for="link in movimentacoes.links" :key="link.label">
+                <button v-if="link.url" @click="router.get(link.url)"
+                    class="rounded px-2.5 py-1 text-xs"
+                    :class="link.active ? 'bg-primary-500 text-white' : 'text-gray-500 hover:bg-gray-100'">
+                    {{ pageLabel(link.label) }}
+                </button>
+                <span v-else class="px-1 text-xs text-gray-300">{{ pageLabel(link.label) }}</span>
+            </template>
         </div>
     </div>
 
@@ -256,7 +325,7 @@ function selecionarTipo() {
 
                 <div>
                     <label class="mb-1.5 block text-sm font-medium text-gray-700">Observações</label>
-                    <textarea v-model="movForm.observacoes" rows="3" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"></textarea>
+                    <RichText v-model="movForm.observacoes" min-height="80px" />
                 </div>
             </div>
 

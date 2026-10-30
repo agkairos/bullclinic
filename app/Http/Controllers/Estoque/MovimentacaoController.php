@@ -18,6 +18,9 @@ class MovimentacaoController extends Controller
   {
     $movimentacoes = MovimentacaoEstoque::with(['produto', 'tipoMovimentacao', 'usuario'])
       ->when($request->produto_id, fn($q) => $q->where('produto_id', $request->produto_id))
+      ->when($request->tipo_movimentacao_id, fn($q) => $q->where('tipo_movimentacao_id', $request->tipo_movimentacao_id))
+      ->when($request->data_inicio, fn($q) => $q->whereDate('movimentado_em', '>=', $request->data_inicio))
+      ->when($request->data_fim, fn($q) => $q->whereDate('movimentado_em', '<=', $request->data_fim))
       ->orderByDesc('movimentado_em')
       ->paginate(20)
       ->withQueryString();
@@ -29,6 +32,7 @@ class MovimentacaoController extends Controller
       'movimentacoes' => $movimentacoes,
       'tipos_movimentacao' => $tiposMovimentacao,
       'produtos' => $produtos,
+      'filters' => $request->only('produto_id', 'tipo_movimentacao_id', 'data_inicio', 'data_fim'),
     ]);
   }
 

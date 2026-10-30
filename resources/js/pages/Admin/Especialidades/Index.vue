@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { router } from '@inertiajs/vue3';
 import AppLayout from '@/layouts/AppLayout.vue';
+import RichText from '@/components/RichText.vue';
 
 defineOptions({ layout: AppLayout });
 
@@ -95,7 +96,7 @@ function excluir(id: number) {
         <div v-if="drawer" class="fixed inset-0 z-40 bg-black/20" @click="drawer = false" />
     </Transition>
     <Transition name="slide">
-        <div v-if="drawer" class="fixed inset-y-0 right-0 z-50 flex w-[400px] flex-col bg-white shadow-2xl">
+        <div v-if="drawer" class="fixed inset-y-0 right-0 z-50 flex w-100 flex-col bg-white shadow-2xl">
             <div class="flex items-center justify-between border-b border-gray-100 px-6 py-4">
                 <h2 class="text-base font-semibold text-gray-800">{{ editando ? 'Editar especialidade' : 'Nova especialidade' }}</h2>
                 <button @click="drawer = false" class="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100">
@@ -109,7 +110,7 @@ function excluir(id: number) {
                 </div>
                 <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600">Descrição</label>
-                    <textarea v-model="form.descricao" rows="3" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 resize-none"></textarea>
+                    <RichText v-model="form.descricao" min-height="80px" />
                 </div>
             </div>
             <div class="flex items-center justify-between border-t border-gray-100 px-6 py-4">

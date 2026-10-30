@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { router } from '@inertiajs/vue3';
 import AppLayout from '@/layouts/AppLayout.vue';
+import RichText from '@/components/RichText.vue';
 
 defineOptions({ layout: AppLayout });
 
@@ -181,7 +182,7 @@ function excluir(id: number) {
                 </div>
                 <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600">Observações</label>
-                    <textarea v-model="form.observacoes" rows="2" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-500 resize-none"></textarea>
+                    <RichText v-model="form.observacoes" min-height="60px" />
                 </div>
             </div>
             <div class="flex items-center justify-between border-t border-gray-100 px-6 py-4">
